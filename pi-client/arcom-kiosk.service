@@ -1,0 +1,18 @@
+[Unit]
+Description=Arcom Kiosk Display
+After=graphical.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Environment=DISPLAY=:0
+Environment=SERVER=http://n8n.local:8080
+ExecStart=/home/pi/arcom-kiosk/kiosk.sh
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/arcom-kiosk.log
+StandardError=append:/var/log/arcom-kiosk.log
+
+[Install]
+WantedBy=graphical.target
