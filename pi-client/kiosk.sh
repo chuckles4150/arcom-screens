@@ -108,9 +108,9 @@ launch_chromium() {
   local url="$1"
   log "launching chromium → $url"
   echo "$url" > "$LAST_URL_FILE"
-  pkill -f chromium-browser 2>/dev/null || true
+  pkill -f chromium 2>/dev/null || true
   sleep 1
-  DISPLAY=:0 chromium-browser "${CHROMIUM_FLAGS[@]}" "$url" &
+  DISPLAY=:0 chromium "${CHROMIUM_FLAGS[@]}" "$url" &
 }
 
 navigate_chromium() {
