@@ -10,11 +10,20 @@ if [[ "$EUID" -ne 0 ]]; then
   exit 1
 fi
 
-INSTALL_DIR="/home/pi/arcom-kiosk"
-SCRIPT_URL_BASE="${SCRIPT_URL_BASE:-}" # empty = local install
+# Use the real user (whoever ran sudo) — works regardless of whether
+# they named themselves 'pi', 'pi-printroom', etc.
+if [[ -z "${SUDO_USER:-}" ]]; then
+  echo "SUDO_USER is not set — run with sudo, not as root directly"
+  exit 1
+fi
+
+KIOSK_USER="$SUDO_USER"
+KIOSK_HOME="/home/$KIOSK_USER"
+INSTALL_DIR="$KIOSK_HOME/arcom-kiosk"
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "── Arcom Kiosk Installer ──"
+echo "Installing for user: $KIOSK_USER"
 echo
 
 # 1. Install dependencies
@@ -36,47 +45,47 @@ echo "[2/6] Setting up kiosk directory..."
 mkdir -p "$INSTALL_DIR"
 cp "$REPO_DIR/kiosk.sh" "$INSTALL_DIR/kiosk.sh"
 chmod +x "$INSTALL_DIR/kiosk.sh"
-chown -R pi:pi "$INSTALL_DIR"
+chown -R "$KIOSK_USER:$KIOSK_USER" "$INSTALL_DIR"
 
 # 3. Create xinitrc — auto-start X with Chromium kiosk on tty1
 echo "[3/6] Configuring X auto-start..."
-cat > /home/pi/.xinitrc <<'EOF'
+cat > "$KIOSK_HOME/.xinitrc" <<EOF
 #!/bin/sh
-exec /home/pi/arcom-kiosk/kiosk.sh
+exec $INSTALL_DIR/kiosk.sh
 EOF
-chmod +x /home/pi/.xinitrc
-chown pi:pi /home/pi/.xinitrc
+chmod +x "$KIOSK_HOME/.xinitrc"
+chown "$KIOSK_USER:$KIOSK_USER" "$KIOSK_HOME/.xinitrc"
 
-# 4. Auto-login pi user on tty1
+# 4. Auto-login user on tty1
 echo "[4/6] Configuring auto-login..."
 mkdir -p /etc/systemd/system/getty@tty1.service.d
-cat > /etc/systemd/system/getty@tty1.service.d/override.conf <<'EOF'
+cat > /etc/systemd/system/getty@tty1.service.d/override.conf <<EOF
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin pi --noclear %I $TERM
+ExecStart=-/sbin/agetty --autologin $KIOSK_USER --noclear %I \$TERM
 EOF
 
 # 5. Auto-startx on login (~/.bash_profile)
-cat > /home/pi/.bash_profile <<'EOF'
+cat > "$KIOSK_HOME/.bash_profile" <<'EOF'
 if [[ -z $DISPLAY && $XDG_VTNR -eq 1 ]]; then
   startx -- -nocursor
 fi
 EOF
-chown pi:pi /home/pi/.bash_profile
+chown "$KIOSK_USER:$KIOSK_USER" "$KIOSK_HOME/.bash_profile"
 
 # 6. Log file with proper permissions
 echo "[5/6] Setting up logging..."
 touch /var/log/arcom-kiosk.log
-chown pi:pi /var/log/arcom-kiosk.log
+chown "$KIOSK_USER:$KIOSK_USER" /var/log/arcom-kiosk.log
 
 # Done
 echo "[6/6] Done."
 echo
 echo "── Next steps ──"
-echo "1. Set the server URL by editing: /home/pi/arcom-kiosk/kiosk.sh"
+echo "1. Set the server URL by editing: $INSTALL_DIR/kiosk.sh"
 echo "   (look for SERVER= near the top, default http://n8n.local:8080)"
-echo "2. Set the Pi's hostname to match what's in the dashboard:"
-echo "     sudo raspi-config → System Options → Hostname"
+echo "2. Make sure the Pi's hostname matches what you'll register in"
+echo "   the dashboard. Current hostname: $(hostname)"
 echo "3. Register this hostname in the dashboard, then reboot:"
 echo "     sudo reboot"
 echo
