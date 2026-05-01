@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Login } from './components/Login.jsx';
-import { ScreenManager } from './components/ScreenManager.jsx';
+import ScreenManager from './components/ScreenManager.jsx';
 import { getStoredPassword, api } from './api.js';
 
 export default function App() {
