@@ -270,12 +270,30 @@ main_loop() {
     log "showing URL $((url_idx + 1))/$count for ${wait_seconds}s"
 
     # Sleep in 5s chunks so we can react to chromium dying mid-wait
+    # OR a URL change in the config OR a force-refresh from dashboard
     local elapsed=0
     while [[ $elapsed -lt $wait_seconds ]]; do
       sleep 5
       elapsed=$((elapsed + 5))
       if [[ -f /tmp/arcom-kiosk-needs-relaunch ]]; then
         log "watchdog interrupt during wait"
+        break
+      fi
+      # Check if URL config changed mid-wait
+      local current_url
+      current_url=$(get_url "$url_idx")
+      if [[ "$current_url" != "$url" ]]; then
+        log "URL changed mid-wait: $url → $current_url"
+        first_run=true
+        break
+      fi
+      # Check if force-refresh was requested mid-wait
+      local force_at
+      force_at=$(get_config_field '.forceRefreshAt')
+      if [[ -n "$force_at" && "$force_at" != "null" && "$force_at" != "$last_force_refresh" ]]; then
+        log "force refresh during wait"
+        last_force_refresh="$force_at"
+        first_run=true
         break
       fi
     done
