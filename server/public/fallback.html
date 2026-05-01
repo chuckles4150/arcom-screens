@@ -314,12 +314,8 @@
     setInterval(() => {
       secondsLeft--;
       if (secondsLeft <= 0) {
-        // Reload the original URL — kiosk script handles whether it works
-        if (failedUrl) {
-          window.location.href = failedUrl;
-        } else {
-          secondsLeft = 30;
-        }
+        // Reload the fallback page — kiosk script's main loop handles retries
+        window.location.reload();
       }
       update();
     }, 1000);
