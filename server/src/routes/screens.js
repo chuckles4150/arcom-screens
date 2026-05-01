@@ -1,12 +1,9 @@
 // Two routers under one module:
 //   - dashboard: full CRUD, requires password
 //   - piClient: heartbeat + screenshot upload, no password
-//     (Pi clients are on the LAN; the heartbeat endpoint is rate-limited
-//     by the cloudflared tunnel — public exposure is only the dashboard)
 
 import express from 'express';
 import multer from 'multer';
-import path from 'path';
 import {
   getScreens, getScreen, addScreen, updateScreen, deleteScreen,
   logActivity, SCREENSHOTS_DIR,
@@ -106,9 +103,6 @@ dashboard.post('/:id/refresh', async (req, res) => {
 
 const piClient = express.Router();
 
-// Heartbeat: Pi reports it's alive, gets back its config.
-// Pi POSTs every 30s with hostname; server records lastSeen and returns
-// the screen's URLs / refresh / forceRefreshAt.
 piClient.post('/heartbeat', async (req, res) => {
   const { hostname, currentUrl } = req.body;
   if (!hostname) return res.status(400).json({ error: 'missing hostname' });
@@ -141,7 +135,6 @@ piClient.post('/heartbeat', async (req, res) => {
   });
 });
 
-// Screenshot upload: Pi posts a PNG of what it's currently displaying.
 const upload = multer({
   storage: multer.diskStorage({
     destination: SCREENSHOTS_DIR,

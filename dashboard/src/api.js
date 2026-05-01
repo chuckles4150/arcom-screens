@@ -1,66 +1,55 @@
-// Thin fetch wrapper that injects the dashboard password on every call.
-// Password lives in localStorage after the user logs in.
+// Tiny API helper. Adds Authorization header on every call.
 
-const PASSWORD_KEY = 'arcom-screens-pw';
+const PASSWORD_KEY = 'arcom-screens-password';
 
-export function getPassword() {
-  return localStorage.getItem(PASSWORD_KEY);
+export function getStoredPassword() {
+  return sessionStorage.getItem(PASSWORD_KEY) || '';
 }
 
-export function setPassword(pw) {
-  localStorage.setItem(PASSWORD_KEY, pw);
+export function setStoredPassword(password) {
+  sessionStorage.setItem(PASSWORD_KEY, password);
 }
 
-export function clearPassword() {
-  localStorage.removeItem(PASSWORD_KEY);
+export function clearStoredPassword() {
+  sessionStorage.removeItem(PASSWORD_KEY);
 }
 
-async function request(path, options = {}) {
-  const pw = getPassword();
-  const res = await fetch(path, {
-    ...options,
+async function request(method, path, body) {
+  const opts = {
+    method,
     headers: {
       'Content-Type': 'application/json',
-      ...(pw ? { Authorization: `Bearer ${pw}` } : {}),
-      ...(options.headers || {}),
+      'Authorization': `Bearer ${getStoredPassword()}`,
     },
-  });
+  };
+  if (body !== undefined) opts.body = JSON.stringify(body);
 
+  const res = await fetch(path, opts);
   if (res.status === 401) {
-    clearPassword();
+    clearStoredPassword();
     window.location.reload();
     throw new Error('unauthorized');
   }
-
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `${res.status} ${res.statusText}`);
   }
-
   return res.json();
 }
 
 export const api = {
-  // Auth — calls a known-cheap endpoint to verify the password.
-  async login(pw) {
-    const res = await fetch('/api/screens', {
-      headers: { Authorization: `Bearer ${pw}` },
-    });
-    if (res.ok) {
-      setPassword(pw);
-      return true;
-    }
-    return false;
+  // Try a no-op call to verify password works
+  ping: () => request('GET', '/api/screens'),
+
+  listScreens: () => request('GET', '/api/screens').then(d => d.screens),
+  getScreen: (id) => request('GET', `/api/screens/${id}`),
+  addScreen: (screen) => request('POST', '/api/screens', screen),
+  updateScreen: (id, patch) => request('PUT', `/api/screens/${id}`, patch),
+  deleteScreen: (id) => request('DELETE', `/api/screens/${id}`),
+  refreshScreen: (id) => request('POST', `/api/screens/${id}/refresh`),
+
+  listActivity: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request('GET', `/api/activity${qs ? '?' + qs : ''}`).then(d => d.activity);
   },
-
-  // Screens
-  listScreens: () => request('/api/screens'),
-  getScreen: (id) => request(`/api/screens/${id}`),
-  addScreen: (screen) => request('/api/screens', { method: 'POST', body: JSON.stringify(screen) }),
-  updateScreen: (id, patch) => request(`/api/screens/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
-  deleteScreen: (id) => request(`/api/screens/${id}`, { method: 'DELETE' }),
-  forceRefresh: (id) => request(`/api/screens/${id}/refresh`, { method: 'POST' }),
-
-  // Activity
-  listActivity: () => request('/api/activity'),
 };

@@ -1,5 +1,6 @@
 // arcom-screens server
 // Express app: REST API for the dashboard + heartbeat endpoint for Pi clients.
+// Also serves the fallback page that Pis show when their target URL is down.
 
 import express from 'express';
 import cors from 'cors';
@@ -16,6 +17,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = process.env.PORT || 8080;
 const DASHBOARD_DIR = path.resolve(__dirname, '../../dashboard/dist');
+const PUBLIC_DIR = path.resolve(__dirname, '../public');
 const SCREENSHOTS_DIR = path.resolve(__dirname, '../data/screenshots');
 
 await initStorage();
@@ -31,20 +33,20 @@ app.use(express.json({ limit: '2mb' }));
 
 app.use('/api/pi', screensRouter.piClient);
 
+// Static public assets — fallback.html lives here, no auth needed
+app.use(express.static(PUBLIC_DIR));
+
 // ── Authenticated endpoints ───────────────────────────────────────
-// Dashboard talks to these.
 
 app.use('/api', authMiddleware);
 app.use('/api/screens', screensRouter.dashboard);
 app.use('/api/activity', activityRouter);
 
-// ── Static assets ─────────────────────────────────────────────────
+// ── Static screenshots ────────────────────────────────────────────
 
 app.use('/screenshots', express.static(SCREENSHOTS_DIR));
 
 // ── Dashboard SPA ─────────────────────────────────────────────────
-// Serves the built React app. Unauthenticated — auth happens client-side
-// and on every API call.
 
 app.use(express.static(DASHBOARD_DIR));
 app.get(/^(?!\/api).*/, (req, res) => {

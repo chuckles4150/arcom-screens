@@ -1,11 +1,11 @@
 # Build the dashboard, then bundle it into the server image.
-# Single container serves both the API and the static frontend.
+# Single container serves API, dashboard, and public assets (fallback page).
 
 # ── Stage 1: build the React dashboard ───────────────────────────
 FROM node:20-alpine AS dashboard-build
 WORKDIR /app
 COPY dashboard/package*.json ./
-RUN npm ci
+RUN npm install
 COPY dashboard/ ./
 RUN npm run build
 
@@ -15,10 +15,11 @@ WORKDIR /app/server
 
 # Install server deps
 COPY server/package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
-# Copy server source
+# Copy server source and public assets
 COPY server/src ./src
+COPY server/public ./public
 
 # Copy the built dashboard from stage 1
 COPY --from=dashboard-build /app/dist /app/dashboard/dist

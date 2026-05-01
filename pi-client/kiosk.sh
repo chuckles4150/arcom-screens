@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # arcom-screens kiosk client.
 # Runs on each Pi 3. Polls the server, runs Chromium fullscreen against
-# the configured URL(s), handles rotation, and reloads on the configured
-# refresh interval.
+# the configured URL(s), handles rotation, refreshes, and recovers from
+# Chromium crashes or unreachable target URLs.
 #
 # Lives at /home/<user>/arcom-kiosk/kiosk.sh
 # Started by .xinitrc on tty1 auto-login
@@ -13,6 +13,9 @@ set -euo pipefail
 SERVER="${SERVER:-http://n8n.local:8080}"
 HOSTNAME="$(hostname)"
 HEARTBEAT_INTERVAL=30
+WATCHDOG_INTERVAL=10
+URL_CHECK_TIMEOUT=8
+
 CHROMIUM_FLAGS=(
   --kiosk
   --start-fullscreen
@@ -25,21 +28,20 @@ CHROMIUM_FLAGS=(
   --autoplay-policy=no-user-gesture-required
   --disable-pinch
   --overscroll-history-navigation=0
-  --disable-gpu
+  --disable-session-crashed-bubble
+  --disable-restore-session-state
+  --use-gl=swiftshader
 )
 
 CONFIG_FILE="/tmp/arcom-kiosk-config.json"
 LAST_URL_FILE="/tmp/arcom-kiosk-last-url"
-STATE_FILE="/tmp/arcom-kiosk-state"
+SINCE_FILE="/tmp/arcom-kiosk-fallback-since"
 
 log() {
   echo "[$(date '+%H:%M:%S')] $*"
 }
 
 # ── Heartbeat ─────────────────────────────────────────────────────
-# Phones home every HEARTBEAT_INTERVAL with current URL, gets back
-# the screen's full config. Writes config to $CONFIG_FILE so the
-# main loop can read it.
 heartbeat_loop() {
   while true; do
     local current_url
@@ -60,9 +62,7 @@ heartbeat_loop() {
   done
 }
 
-# ── Screenshot uploader ───────────────────────────────────────────
-# Captures the framebuffer with scrot and uploads.
-# Runs every 60s — slower than heartbeat to keep load light.
+# ── Screenshot uploader ──────────────────────────────────────────
 screenshot_loop() {
   sleep 30  # let chromium settle on first boot
   while true; do
@@ -83,7 +83,20 @@ screenshot_loop() {
   done
 }
 
-# ── Reading config ────────────────────────────────────────────────
+# ── Chromium watchdog ────────────────────────────────────────────
+# Checks every WATCHDOG_INTERVAL seconds that Chromium is still alive.
+# If it died, sets a flag for the main loop to relaunch.
+chromium_watchdog() {
+  while true; do
+    sleep $WATCHDOG_INTERVAL
+    if ! pgrep -f "chromium.*--kiosk" > /dev/null; then
+      log "watchdog: chromium not running, will relaunch"
+      touch /tmp/arcom-kiosk-needs-relaunch
+    fi
+  done
+}
+
+# ── Reading config ───────────────────────────────────────────────
 get_config_field() {
   local field="$1"
   jq -r "$field" "$CONFIG_FILE" 2>/dev/null || echo ""
@@ -103,10 +116,40 @@ get_url_duration() {
   jq -r ".urls[$i].duration" "$CONFIG_FILE" 2>/dev/null || echo "60"
 }
 
+# ── URL reachability check ───────────────────────────────────────
+url_is_reachable() {
+  local url="$1"
+  local status
+  status=$(curl -s -o /dev/null -w "%{http_code}" \
+    --max-time $URL_CHECK_TIMEOUT \
+    --connect-timeout 5 \
+    "$url" 2>/dev/null || echo "000")
+
+  # 2xx, 3xx are good. 4xx/5xx still mean the server is up so let
+  # Chromium render whatever it returns (might be an auth page etc).
+  if [[ "$status" =~ ^[2345] ]]; then
+    return 0
+  fi
+  return 1
+}
+
+build_fallback_url() {
+  local target="$1"
+  local since
+  since=$(cat "$SINCE_FILE" 2>/dev/null || echo "")
+  if [[ -z "$since" ]]; then
+    since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    echo "$since" > "$SINCE_FILE"
+  fi
+
+  local enc_url enc_since
+  enc_url=$(printf '%s' "$target" | jq -sRr @uri)
+  enc_since=$(printf '%s' "$since" | jq -sRr @uri)
+
+  echo "$SERVER/fallback.html?hostname=$HOSTNAME&url=$enc_url&since=$enc_since"
+}
+
 # ── Chromium control ─────────────────────────────────────────────
-# Detects current screen geometry at launch time so we don't
-# hardcode a resolution. Works on 1080p, 4K, ultrawide, anything
-# the Pi is plugged into.
 launch_chromium() {
   local url="$1"
   log "launching chromium → $url"
@@ -123,7 +166,7 @@ launch_chromium() {
   DISPLAY=:0 chromium "${CHROMIUM_FLAGS[@]}" \
     --window-size="${width},${height}" \
     --window-position=0,0 \
-    "$url" &
+    "$url" >/dev/null 2>&1 &
 }
 
 navigate_chromium() {
@@ -135,7 +178,31 @@ navigate_chromium() {
   DISPLAY=:0 xdotool key Return 2>/dev/null
 }
 
-# ── Main loop ─────────────────────────────────────────────────────
+show_url_or_fallback() {
+  local target="$1"
+  local force_relaunch="$2"
+
+  if url_is_reachable "$target"; then
+    log "target reachable: $target"
+    rm -f "$SINCE_FILE"
+    if [[ "$force_relaunch" == "true" ]]; then
+      launch_chromium "$target"
+    else
+      navigate_chromium "$target"
+    fi
+  else
+    local fallback
+    fallback=$(build_fallback_url "$target")
+    log "target unreachable, showing fallback: $fallback"
+    if [[ "$force_relaunch" == "true" ]]; then
+      launch_chromium "$fallback"
+    else
+      navigate_chromium "$fallback"
+    fi
+  fi
+}
+
+# ── Main loop ────────────────────────────────────────────────────
 main_loop() {
   log "waiting for first config from $SERVER..."
   while [[ ! -f "$CONFIG_FILE" ]]; do
@@ -156,7 +223,7 @@ main_loop() {
       continue
     fi
 
-    # Handle force-refresh from the dashboard
+    # Force-refresh from the dashboard
     local force_at
     force_at=$(get_config_field '.forceRefreshAt')
     if [[ -n "$force_at" && "$force_at" != "null" && "$force_at" != "$last_force_refresh" ]]; then
@@ -165,7 +232,14 @@ main_loop() {
       first_run=true
     fi
 
-    # Get the current URL in the rotation
+    # Watchdog flagged chromium dead
+    if [[ -f /tmp/arcom-kiosk-needs-relaunch ]]; then
+      log "watchdog triggered relaunch"
+      rm -f /tmp/arcom-kiosk-needs-relaunch
+      first_run=true
+    fi
+
+    # Get current URL in rotation
     local url
     url=$(get_url "$url_idx")
     if [[ -z "$url" || "$url" == "null" ]]; then
@@ -173,14 +247,10 @@ main_loop() {
       url=$(get_url 0)
     fi
 
-    if [[ "$first_run" == "true" ]]; then
-      launch_chromium "$url"
-      first_run=false
-    else
-      navigate_chromium "$url"
-    fi
+    show_url_or_fallback "$url" "$first_run"
+    first_run=false
 
-    # Wait either the per-URL duration (if rotating) or the refresh interval
+    # Wait either the per-URL duration or the refresh interval
     local wait_seconds
     if [[ "$count" -gt 1 ]]; then
       wait_seconds=$(get_url_duration "$url_idx")
@@ -191,14 +261,26 @@ main_loop() {
     fi
 
     log "showing URL $((url_idx + 1))/$count for ${wait_seconds}s"
-    sleep "$wait_seconds"
 
-    # Advance rotation
-    url_idx=$(( (url_idx + 1) % count ))
+    # Sleep in 5s chunks so we can react to chromium dying mid-wait
+    local elapsed=0
+    while [[ $elapsed -lt $wait_seconds ]]; do
+      sleep 5
+      elapsed=$((elapsed + 5))
+      if [[ -f /tmp/arcom-kiosk-needs-relaunch ]]; then
+        log "watchdog interrupt during wait"
+        break
+      fi
+    done
+
+    # Advance rotation only if we waited the full duration
+    if [[ $elapsed -ge $wait_seconds ]]; then
+      url_idx=$(( (url_idx + 1) % count ))
+    fi
   done
 }
 
-# ── Boot ──────────────────────────────────────────────────────────
+# ── Boot ─────────────────────────────────────────────────────────
 log "arcom-kiosk starting on $HOSTNAME"
 log "server: $SERVER"
 
@@ -208,9 +290,10 @@ DISPLAY=:0 xset -dpms 2>/dev/null || true
 DISPLAY=:0 xset s noblank 2>/dev/null || true
 DISPLAY=:0 unclutter -idle 1 -root &
 
-# Run heartbeat and screenshot loops in background
+# Background loops
 heartbeat_loop &
 screenshot_loop &
+chromium_watchdog &
 
-# Main loop runs in foreground
+# Main loop in foreground
 main_loop

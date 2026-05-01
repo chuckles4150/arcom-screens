@@ -9,7 +9,7 @@ if (!PASSWORD) {
 }
 
 export function authMiddleware(req, res, next) {
-  if (!PASSWORD) return next(); // dev mode fallback
+  if (!PASSWORD) return next();
 
   const header = req.headers.authorization || '';
   const provided = header.replace(/^Bearer\s+/i, '');

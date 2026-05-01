@@ -10,8 +10,6 @@ if [[ "$EUID" -ne 0 ]]; then
   exit 1
 fi
 
-# Use the real user (whoever ran sudo) — works regardless of whether
-# they named themselves 'pi', 'pi-printroom', etc.
 if [[ -z "${SUDO_USER:-}" ]]; then
   echo "SUDO_USER is not set — run with sudo, not as root directly"
   exit 1
@@ -47,11 +45,11 @@ cp "$REPO_DIR/kiosk.sh" "$INSTALL_DIR/kiosk.sh"
 chmod +x "$INSTALL_DIR/kiosk.sh"
 chown -R "$KIOSK_USER:$KIOSK_USER" "$INSTALL_DIR"
 
-# 3. Create xinitrc — auto-start X with Chromium kiosk on tty1
+# 3. Create xinitrc with log redirection
 echo "[3/6] Configuring X auto-start..."
 cat > "$KIOSK_HOME/.xinitrc" <<EOF
 #!/bin/sh
-exec $INSTALL_DIR/kiosk.sh
+exec $INSTALL_DIR/kiosk.sh >> /var/log/arcom-kiosk.log 2>&1
 EOF
 chmod +x "$KIOSK_HOME/.xinitrc"
 chown "$KIOSK_USER:$KIOSK_USER" "$KIOSK_HOME/.xinitrc"
@@ -65,7 +63,7 @@ ExecStart=
 ExecStart=-/sbin/agetty --autologin $KIOSK_USER --noclear %I \$TERM
 EOF
 
-# 5. Auto-startx on login (~/.bash_profile)
+# 5. Auto-startx on login
 cat > "$KIOSK_HOME/.bash_profile" <<'EOF'
 if [[ -z $DISPLAY && $XDG_VTNR -eq 1 ]]; then
   startx -- -nocursor
