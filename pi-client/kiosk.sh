@@ -4,8 +4,8 @@
 # the configured URL(s), handles rotation, and reloads on the configured
 # refresh interval.
 #
-# Lives at /home/pi/arcom-kiosk/kiosk.sh
-# Started by systemd: arcom-kiosk.service
+# Lives at /home/<user>/arcom-kiosk/kiosk.sh
+# Started by .xinitrc on tty1 auto-login
 
 set -euo pipefail
 
@@ -15,6 +15,7 @@ HOSTNAME="$(hostname)"
 HEARTBEAT_INTERVAL=30
 CHROMIUM_FLAGS=(
   --kiosk
+  --start-fullscreen
   --noerrdialogs
   --disable-infobars
   --disable-translate
@@ -24,6 +25,7 @@ CHROMIUM_FLAGS=(
   --autoplay-policy=no-user-gesture-required
   --disable-pinch
   --overscroll-history-navigation=0
+  --disable-gpu
 )
 
 CONFIG_FILE="/tmp/arcom-kiosk-config.json"
@@ -65,7 +67,6 @@ screenshot_loop() {
   sleep 30  # let chromium settle on first boot
   while true; do
     local img="/tmp/arcom-kiosk-shot.png"
-    # scrot needs $DISPLAY to find the X server
     DISPLAY=:0 scrot --silent --quality 60 "$img" 2>/dev/null || {
       log "scrot failed (no display yet?)"
       sleep 60
@@ -83,7 +84,6 @@ screenshot_loop() {
 }
 
 # ── Reading config ────────────────────────────────────────────────
-# jq pulls fields out of the JSON the server returns.
 get_config_field() {
   local field="$1"
   jq -r "$field" "$CONFIG_FILE" 2>/dev/null || echo ""
@@ -104,29 +104,38 @@ get_url_duration() {
 }
 
 # ── Chromium control ─────────────────────────────────────────────
+# Detects current screen geometry at launch time so we don't
+# hardcode a resolution. Works on 1080p, 4K, ultrawide, anything
+# the Pi is plugged into.
 launch_chromium() {
   local url="$1"
   log "launching chromium → $url"
   echo "$url" > "$LAST_URL_FILE"
   pkill -f chromium 2>/dev/null || true
   sleep 1
-  DISPLAY=:0 chromium "${CHROMIUM_FLAGS[@]}" "$url" &
+
+  local geometry
+  geometry=$(DISPLAY=:0 xdotool getdisplaygeometry 2>/dev/null || echo "1920 1080")
+  local width="${geometry% *}"
+  local height="${geometry#* }"
+  log "detected screen: ${width}x${height}"
+
+  DISPLAY=:0 chromium "${CHROMIUM_FLAGS[@]}" \
+    --window-size="${width},${height}" \
+    --window-position=0,0 \
+    "$url" &
 }
 
 navigate_chromium() {
   local url="$1"
   log "navigating chromium → $url"
   echo "$url" > "$LAST_URL_FILE"
-  # xdotool switches the URL in the existing tab — faster than relaunching
   DISPLAY=:0 xdotool search --onlyvisible --class chromium windowactivate --sync \
     key ctrl+l type --delay 50 "$url" 2>/dev/null
   DISPLAY=:0 xdotool key Return 2>/dev/null
 }
 
 # ── Main loop ─────────────────────────────────────────────────────
-# Wait for first heartbeat to populate config, then loop forever:
-# - For single URL: launch chromium, sleep until refresh interval, reload
-# - For rotation: cycle URLs with their per-URL durations, reload page on refresh interval
 main_loop() {
   log "waiting for first config from $SERVER..."
   while [[ ! -f "$CONFIG_FILE" ]]; do
@@ -203,5 +212,5 @@ DISPLAY=:0 unclutter -idle 1 -root &
 heartbeat_loop &
 screenshot_loop &
 
-# Main loop runs in foreground (systemd watches this)
+# Main loop runs in foreground
 main_loop
