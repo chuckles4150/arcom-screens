@@ -28,9 +28,9 @@ CHROMIUM_FLAGS=(
   --autoplay-policy=no-user-gesture-required
   --disable-pinch
   --overscroll-history-navigation=0
+  --disable-gpu
   --disable-session-crashed-bubble
   --disable-restore-session-state
-  --use-gl=swiftshader
 )
 
 CONFIG_FILE="/tmp/arcom-kiosk-config.json"
@@ -85,7 +85,7 @@ screenshot_loop() {
 
 # ── Chromium watchdog ────────────────────────────────────────────
 # Checks every WATCHDOG_INTERVAL seconds that Chromium is still alive.
-# If it died, sets a flag for the main loop to relaunch.
+# If it died, sets first_run flag so main loop re-launches it.
 chromium_watchdog() {
   while true; do
     sleep $WATCHDOG_INTERVAL
@@ -117,6 +117,8 @@ get_url_duration() {
 }
 
 # ── URL reachability check ───────────────────────────────────────
+# Returns 0 if URL responds with anything in the 2xx/3xx range.
+# Used to decide whether to load the URL or the fallback page.
 url_is_reachable() {
   local url="$1"
   local status
@@ -125,9 +127,14 @@ url_is_reachable() {
     --connect-timeout 5 \
     "$url" 2>/dev/null || echo "000")
 
-  # 2xx, 3xx are good. 4xx/5xx still mean the server is up so let
-  # Chromium render whatever it returns (might be an auth page etc).
-  if [[ "$status" =~ ^[2345] ]]; then
+  # 2xx and 3xx are good. 4xx/5xx still mean the server responded
+  # which means the page will at least render (even if it's an
+  # error page it's better than the kiosk going to a fallback).
+  if [[ "$status" =~ ^[23] ]]; then
+    return 0
+  fi
+  # 4xx/5xx — let Chromium handle it (might be auth required etc)
+  if [[ "$status" =~ ^[45] ]]; then
     return 0
   fi
   return 1
