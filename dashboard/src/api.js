@@ -52,4 +52,9 @@ export const api = {
     const qs = new URLSearchParams(params).toString();
     return request('GET', `/api/activity${qs ? '?' + qs : ''}`).then(d => d.activity);
   },
+
+  // Phase-1 additions
+  networkSummary: () => request('GET', '/api/network/summary'),
+  screenUptime: (id, window = '7d') =>
+    request('GET', `/api/screens/${id}/uptime?window=${encodeURIComponent(window)}`),
 };
