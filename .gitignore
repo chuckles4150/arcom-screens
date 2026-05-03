@@ -22,3 +22,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Claude Code (per-machine workflow config)
+.claude/
