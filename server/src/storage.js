@@ -97,3 +97,19 @@ export async function logActivity(entry) {
 }
 
 export { SCREENSHOTS_DIR };
+
+// ── Snapshot metadata ─────────────────────────────────────────────
+
+// Returns the ISO timestamp of the most recent screenshot for this hostname,
+// or null if no screenshot exists yet. Used by the dashboard to render
+// "Snap N min ago" without a separate API round-trip.
+export async function getSnapshotAt(hostname) {
+  if (!hostname) return null;
+  try {
+    const stat = await fs.stat(path.join(SCREENSHOTS_DIR, `${hostname}.png`));
+    return stat.mtime.toISOString();
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+}

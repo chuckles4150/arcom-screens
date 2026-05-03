@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 
 import { screensRouter } from './routes/screens.js';
 import { activityRouter } from './routes/activity.js';
+import { networkRouter } from './routes/network.js';
 import { authMiddleware } from './middleware/auth.js';
 import { initStorage } from './storage.js';
 import { startWatchdog } from './watchdog.js';
@@ -41,6 +42,7 @@ app.use(express.static(PUBLIC_DIR));
 app.use('/api', authMiddleware);
 app.use('/api/screens', screensRouter.dashboard);
 app.use('/api/activity', activityRouter);
+app.use('/api/network', networkRouter);
 
 // ── Static screenshots ────────────────────────────────────────────
 
