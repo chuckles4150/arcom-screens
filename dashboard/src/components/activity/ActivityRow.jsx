@@ -1,6 +1,7 @@
 import React from 'react';
 import {
-  RefreshCw, Edit3, Wifi, WifiOff, Plus, Trash2, Repeat, Activity as ActIcon,
+  RefreshCw, Edit3, Wifi, WifiOff, Plus, Trash2, Repeat, Power,
+  Activity as ActIcon,
 } from 'lucide-react';
 import { T } from '../../theme.js';
 import { formatActivityTime } from '../../utils/time.js';
@@ -13,6 +14,7 @@ const KIND_CONFIG = {
   add:      { Icon: Plus,      color: T.arcSage,    label: 'ADDED' },
   remove:   { Icon: Trash2,    color: T.statusDanger, label: 'REMOVED' },
   rotation: { Icon: Repeat,    color: T.arcNavy500, label: 'ROTATION' },
+  boot:     { Icon: Power,     color: T.arcYellow600, label: 'REBOOT' },
 };
 const FALLBACK = { Icon: ActIcon, color: T.fg3, label: 'EVENT' };
 

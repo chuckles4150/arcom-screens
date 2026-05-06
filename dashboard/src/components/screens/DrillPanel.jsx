@@ -11,6 +11,7 @@ import { formatRelative, formatActivityTime } from '../../utils/time.js';
 
 export function DrillPanel({ screen, onClose, onEdit, onRefresh, onDeleted, onError }) {
   const uptimeQ = useFetch(() => api.screenUptime(screen.id), [screen.id]);
+  const metricsQ = useFetch(() => api.screenMetrics(screen.id, '24h'), [screen.id]);
   const activityQ = useFetch(() => api.listActivity({ screen: screen.name, limit: 10 }), [screen.id, screen.name]);
 
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -151,8 +152,10 @@ export function DrillPanel({ screen, onClose, onEdit, onRefresh, onDeleted, onEr
             <ActionPill disabled title="Pi logs arrive in Phase 2" icon={<Terminal size={13} strokeWidth={1.75} />}>Console</ActionPill>
           </div>
 
-          {/* Stats grid — Phase 1 shows only Uptime · 7d */}
-          <StatsGrid uptimeQ={uptimeQ} />
+          {/* Stats grid: uptime + bandwidth + restarts + response time, plus an
+              optional load/memory card below (Phase 2 — populated from
+              /api/screens/:id/metrics). */}
+          <StatsGrid uptimeQ={uptimeQ} metricsQ={metricsQ} />
 
           {/* Rotation schedule */}
           {isRotating && (
@@ -282,36 +285,202 @@ function ActionPill({ children, icon, onClick, disabled, title, as = 'button', h
   );
 }
 
-function StatsGrid({ uptimeQ }) {
+function StatsGrid({ uptimeQ, metricsQ }) {
   const u = uptimeQ.data;
+  const m = metricsQ.data;
+
   return (
     <div>
-      <SectionLabel>Health · 7 days</SectionLabel>
+      <SectionLabel>Health</SectionLabel>
       <div style={{
-        display: 'grid', gridTemplateColumns: '1fr', gap: 12,
+        display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12,
       }}>
+        {/* Uptime · 7d */}
         <StatCard label="UPTIME · 7D">
           {uptimeQ.loading ? (
-            <span style={{ color: T.fg3, fontSize: 12 }}>Loading…</span>
+            <Loading />
           ) : uptimeQ.error ? (
-            <span style={{ color: T.statusDanger, fontSize: 12 }}>Failed to load</span>
+            <Failed />
           ) : u ? (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
-              <span style={{
-                fontFamily: T.fontDisplay, fontWeight: 800, fontSize: 30,
-                color: u.uptimePct < 95 ? T.statusWarn : T.fgBrand,
-                fontVariantNumeric: 'tabular-nums', lineHeight: 1,
-              }}>{u.uptimePct}%</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Sparkline values={u.history} color={u.uptimePct < 95 ? T.statusWarn : T.arcSage} height={26} />
-              </div>
-            </div>
-          ) : null}
+            <BigStat
+              value={`${u.uptimePct}%`}
+              warn={u.uptimePct < 95}
+              chart={<Sparkline values={u.history} color={u.uptimePct < 95 ? T.statusWarn : T.arcSage} height={26} />}
+            />
+          ) : <NoData />}
         </StatCard>
-        {/* Bandwidth · 24h, Restarts · 7d, Response time → revealed in Phase 2 */}
+
+        {/* Bandwidth · 24h */}
+        <StatCard label="BANDWIDTH · 24H">
+          {metricsQ.loading ? <Loading />
+            : metricsQ.error ? <Failed />
+            : m ? <BandwidthCardBody m={m} />
+            : <NoData />}
+        </StatCard>
+
+        {/* Restarts · 7d */}
+        <StatCard label="RESTARTS · 7D">
+          {metricsQ.loading ? <Loading />
+            : metricsQ.error ? <Failed />
+            : m ? <RestartsCardBody m={m} />
+            : <NoData />}
+        </StatCard>
+
+        {/* Response time */}
+        <StatCard label="RESPONSE TIME">
+          {metricsQ.loading ? <Loading />
+            : metricsQ.error ? <Failed />
+            : m ? <ResponseTimeCardBody m={m} />
+            : <NoData />}
+        </StatCard>
       </div>
+
+      {/* Load + memory — wide card under the grid, only when there's data */}
+      {m && (m.load?.avg != null || m.memory?.totalMb) && (
+        <div style={{ marginTop: 12 }}>
+          <LoadMemCard m={m} />
+        </div>
+      )}
     </div>
   );
+}
+
+function Loading() {
+  return <span style={{ color: T.fg3, fontSize: 12 }}>Loading…</span>;
+}
+function Failed() {
+  return <span style={{ color: T.statusDanger, fontSize: 12 }}>Failed to load</span>;
+}
+function NoData() {
+  return <span style={{ color: T.fg3, fontSize: 12 }}>No data yet</span>;
+}
+
+function BigStat({ value, sub, warn, chart }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, minWidth: 0 }}>
+      <div style={{ minWidth: 0 }}>
+        <span style={{
+          fontFamily: T.fontDisplay, fontWeight: 800, fontSize: 26,
+          color: warn ? T.statusWarn : T.fgBrand,
+          fontVariantNumeric: 'tabular-nums', lineHeight: 1,
+        }}>{value}</span>
+        {sub != null && (
+          <div style={{
+            fontFamily: T.fontMono, fontSize: 10.5, color: T.fg3, marginTop: 4,
+          }}>{sub}</div>
+        )}
+      </div>
+      {chart && <div style={{ flex: 1, minWidth: 0 }}>{chart}</div>}
+    </div>
+  );
+}
+
+function BandwidthCardBody({ m }) {
+  const total = m.bandwidth?.totalBytes24h ?? 0;
+  const rx = m.bandwidth?.rxBytes24h ?? 0;
+  const tx = m.bandwidth?.txBytes24h ?? 0;
+  const series = (m.bandwidth?.rxHistory || []).map((v, i) =>
+    (v + (m.bandwidth?.txHistory?.[i] ?? 0)));
+  return (
+    <BigStat
+      value={formatBytes(total)}
+      sub={`↓ ${formatBytes(rx)} · ↑ ${formatBytes(tx)}`}
+      chart={<Sparkline values={series} color={T.arcNavy500} height={26} />}
+    />
+  );
+}
+
+function RestartsCardBody({ m }) {
+  const n = m.restarts?.total7d ?? 0;
+  const lastBoot = m.restarts?.bootTimestamps?.[m.restarts.bootTimestamps.length - 1];
+  const sub = lastBoot
+    ? `last: ${formatRelative(lastBoot)}`
+    : 'none in 7d';
+  return (
+    <BigStat
+      value={String(n)}
+      sub={sub}
+      warn={n >= 3}
+      chart={<Sparkline values={m.restarts?.history || []} color={n >= 3 ? T.statusWarn : T.arcSage} height={26} fill={false} />}
+    />
+  );
+}
+
+function ResponseTimeCardBody({ m }) {
+  const p50 = m.responseTime?.p50Ms;
+  const p95 = m.responseTime?.p95Ms;
+  if (!Number.isFinite(p50)) return <NoData />;
+  const series = (m.responseTime?.history || []).map(v => v ?? 0);
+  return (
+    <BigStat
+      value={`${Math.round(p50)}ms`}
+      sub={Number.isFinite(p95) ? `p95 ${Math.round(p95)}ms` : ''}
+      warn={p50 > 500}
+      chart={<Sparkline values={series} color={p50 > 500 ? T.statusWarn : T.arcSage} height={26} />}
+    />
+  );
+}
+
+function LoadMemCard({ m }) {
+  const load = m.load?.avg;
+  const memUsed = m.memory?.usedMb;
+  const memTotal = m.memory?.totalMb;
+  const memPct = memTotal ? Math.round((memUsed / memTotal) * 100) : null;
+  return (
+    <div style={{
+      background: T.bgSurface,
+      border: `1px solid ${T.line1}`,
+      borderRadius: 12,
+      padding: '12px 16px',
+      display: 'flex', alignItems: 'center', gap: 24,
+    }}>
+      {load != null && (
+        <div>
+          <div style={{
+            fontFamily: T.fontDisplay, fontSize: 10, fontWeight: 700,
+            letterSpacing: '0.14em', color: T.fg3, textTransform: 'uppercase',
+          }}>Load · 1m</div>
+          <div style={{
+            fontFamily: T.fontDisplay, fontWeight: 800, fontSize: 18,
+            color: load > 1.5 ? T.statusWarn : T.fgBrand,
+            fontVariantNumeric: 'tabular-nums', lineHeight: 1.1,
+          }}>{load.toFixed(2)}</div>
+        </div>
+      )}
+      {memTotal != null && (
+        <div style={{ flex: 1 }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+            fontFamily: T.fontDisplay, fontSize: 10, fontWeight: 700,
+            letterSpacing: '0.14em', color: T.fg3, textTransform: 'uppercase',
+            marginBottom: 4,
+          }}>
+            <span>Memory</span>
+            <span style={{ fontFamily: T.fontMono, color: T.fg2, letterSpacing: 0 }}>
+              {memUsed}/{memTotal} MB
+            </span>
+          </div>
+          <div style={{
+            height: 6, background: T.bgInset, borderRadius: 999, overflow: 'hidden',
+          }}>
+            <div style={{
+              width: `${memPct}%`, height: '100%',
+              background: memPct > 85 ? T.statusWarn : T.arcSage,
+              transition: 'width 200ms',
+            }} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0; let v = bytes;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
 }
 
 function StatCard({ label, children }) {

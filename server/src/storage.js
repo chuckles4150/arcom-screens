@@ -1,4 +1,4 @@
-// JSON file storage. Two files: screens.json and activity.json.
+// JSON file storage. Three files: screens.json, activity.json, metrics.json.
 // Reads cache on boot; writes are flushed to disk on every change.
 
 import fs from 'fs/promises';
@@ -9,11 +9,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(__dirname, '../data');
 const SCREENS_FILE = path.join(DATA_DIR, 'screens.json');
 const ACTIVITY_FILE = path.join(DATA_DIR, 'activity.json');
+const METRICS_FILE = path.join(DATA_DIR, 'metrics.json');
 const SCREENSHOTS_DIR = path.join(DATA_DIR, 'screenshots');
+
+// Per-screen ring buffer cap. At 30s heartbeat that's ~42 hours of samples,
+// comfortably more than the 24h window the dashboard renders.
+const MAX_METRIC_SAMPLES = 5000;
 
 const cache = {
   screens: [],
   activity: [],
+  metrics: {}, // screenId → array of samples, newest first
 };
 
 export async function initStorage() {
@@ -22,8 +28,10 @@ export async function initStorage() {
 
   cache.screens = await readJson(SCREENS_FILE, []);
   cache.activity = await readJson(ACTIVITY_FILE, []);
+  cache.metrics = await readJson(METRICS_FILE, {});
 
-  console.log(`storage: loaded ${cache.screens.length} screens, ${cache.activity.length} activity entries`);
+  const sampleCount = Object.values(cache.metrics).reduce((n, arr) => n + arr.length, 0);
+  console.log(`storage: loaded ${cache.screens.length} screens, ${cache.activity.length} activity entries, ${sampleCount} metric samples`);
 }
 
 async function readJson(file, fallback) {
@@ -111,5 +119,42 @@ export async function getSnapshotAt(hostname) {
   } catch (err) {
     if (err.code === 'ENOENT') return null;
     throw err;
+  }
+}
+
+// ── Metric samples ────────────────────────────────────────────────
+// Per-screen ring buffer — newest first. Each sample is whatever the
+// heartbeat delivered (uptime, bandwidth cumulative bytes, load avg, etc.)
+// plus a server-assigned `ts` (ms since epoch) and `recvAt` (ISO).
+
+export function getMetricSamples(screenId, sinceMs = 0) {
+  const arr = cache.metrics[screenId] || [];
+  if (sinceMs <= 0) return arr;
+  return arr.filter(s => s.ts >= sinceMs);
+}
+
+export function getLatestMetricSample(screenId) {
+  const arr = cache.metrics[screenId];
+  return arr && arr.length ? arr[0] : null;
+}
+
+export async function appendMetricSample(screenId, sample) {
+  if (!screenId || !sample) return null;
+  const ts = sample.ts ?? Date.now();
+  const enriched = { ts, recvAt: new Date(ts).toISOString(), ...sample };
+  if (!cache.metrics[screenId]) cache.metrics[screenId] = [];
+  cache.metrics[screenId].unshift(enriched);
+  if (cache.metrics[screenId].length > MAX_METRIC_SAMPLES) {
+    cache.metrics[screenId].length = MAX_METRIC_SAMPLES;
+  }
+  await writeJson(METRICS_FILE, cache.metrics);
+  return enriched;
+}
+
+// Removes a screen's metric history when the screen is deleted.
+export async function clearMetricSamples(screenId) {
+  if (cache.metrics[screenId]) {
+    delete cache.metrics[screenId];
+    await writeJson(METRICS_FILE, cache.metrics);
   }
 }

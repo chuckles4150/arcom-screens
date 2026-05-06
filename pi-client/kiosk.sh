@@ -5,7 +5,7 @@
 # Chromium crashes or unreachable target URLs.
 #
 # Lives at /home/<user>/arcom-kiosk/kiosk.sh
-# Started by .xinitrc on tty1 auto-login
+# Started by arcom-kiosk.service (systemd) via /usr/bin/startx
 
 set -euo pipefail
 
@@ -15,6 +15,11 @@ HOSTNAME="$(hostname)"
 HEARTBEAT_INTERVAL=30
 WATCHDOG_INTERVAL=10
 URL_CHECK_TIMEOUT=8
+
+# Network interface to read RX/TX bytes from. Pi 3 wired = eth0, wifi = wlan0.
+# Auto-detect: prefer the first non-loopback interface with carrier up.
+NET_IFACE_FILE="/tmp/arcom-kiosk-net-iface"
+LAG_FILE="/tmp/arcom-kiosk-last-lag-ms"
 
 CHROMIUM_FLAGS=(
   --kiosk
@@ -41,17 +46,106 @@ log() {
   echo "[$(date '+%H:%M:%S')] $*"
 }
 
+# ── Metric collection ────────────────────────────────────────────
+# All read from /proc — cheap, no external deps. Returns a JSON snippet
+# the heartbeat loop pastes into the request body. Bandwidth fields are
+# CUMULATIVE bytes; the server computes deltas between successive samples.
+detect_net_iface() {
+  if [[ -s "$NET_IFACE_FILE" ]]; then
+    cat "$NET_IFACE_FILE"
+    return
+  fi
+  local iface
+  for iface in eth0 wlan0; do
+    if [[ -d "/sys/class/net/$iface" ]] && \
+       [[ "$(cat "/sys/class/net/$iface/operstate" 2>/dev/null)" == "up" ]]; then
+      echo "$iface" > "$NET_IFACE_FILE"
+      echo "$iface"
+      return
+    fi
+  done
+  # Fallback: first non-loopback up interface.
+  for iface in /sys/class/net/*; do
+    local name
+    name=$(basename "$iface")
+    [[ "$name" == "lo" ]] && continue
+    if [[ "$(cat "$iface/operstate" 2>/dev/null)" == "up" ]]; then
+      echo "$name" > "$NET_IFACE_FILE"
+      echo "$name"
+      return
+    fi
+  done
+  echo "lo"
+}
+
+collect_metrics() {
+  local uptime_sec
+  uptime_sec=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
+
+  local iface rx_bytes tx_bytes
+  iface=$(detect_net_iface)
+  rx_bytes=$(cat "/sys/class/net/$iface/statistics/rx_bytes" 2>/dev/null || echo 0)
+  tx_bytes=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null || echo 0)
+
+  local load1
+  load1=$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo 0)
+
+  local mem_total_kb mem_avail_kb
+  mem_total_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  mem_avail_kb=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  local mem_total_mb=$(( mem_total_kb / 1024 ))
+  local mem_used_mb=$(( (mem_total_kb - mem_avail_kb) / 1024 ))
+
+  local last_lag_ms
+  last_lag_ms=$(cat "$LAG_FILE" 2>/dev/null || echo 0)
+
+  jq -n \
+    --argjson uptime "$uptime_sec" \
+    --argjson rx "$rx_bytes" \
+    --argjson tx "$tx_bytes" \
+    --arg     load "$load1" \
+    --argjson memUsed "$mem_used_mb" \
+    --argjson memTotal "$mem_total_mb" \
+    --argjson lag "$last_lag_ms" \
+    '{
+       systemUptimeSec: $uptime,
+       bandwidthRxBytes: $rx,
+       bandwidthTxBytes: $tx,
+       loadAvg1m: ($load | tonumber),
+       memUsedMb: $memUsed,
+       memTotalMb: $memTotal,
+       lastLagMs: $lag
+     }'
+}
+
 # ── Heartbeat ─────────────────────────────────────────────────────
 heartbeat_loop() {
   while true; do
-    local current_url
+    local current_url metrics body t0 t1 lag_ms
     current_url=$(cat "$LAST_URL_FILE" 2>/dev/null || echo "")
+    metrics=$(collect_metrics)
 
+    body=$(jq -n \
+      --arg hostname "$HOSTNAME" \
+      --arg currentUrl "$current_url" \
+      --argjson metrics "$metrics" \
+      '{hostname: $hostname, currentUrl: $currentUrl, metrics: $metrics}')
+
+    # Round-trip lag: report this cycle's RTT in the NEXT heartbeat's
+    # metrics block (one cycle of staleness is fine — saves an extra
+    # request just to measure it).
+    t0=$(date +%s%3N)
     local response
     response=$(curl -s -X POST "$SERVER/api/pi/heartbeat" \
       -H "Content-Type: application/json" \
-      -d "{\"hostname\":\"$HOSTNAME\",\"currentUrl\":\"$current_url\"}" \
+      -d "$body" \
       --max-time 10 || echo "")
+    t1=$(date +%s%3N)
+    lag_ms=$(( t1 - t0 ))
+    # Cap at a sane max — if curl timed out the lag is meaningless noise.
+    if [[ $lag_ms -gt 0 && $lag_ms -lt 30000 ]]; then
+      echo "$lag_ms" > "$LAG_FILE"
+    fi
 
     if [[ -n "$response" ]]; then
       echo "$response" > "$CONFIG_FILE.tmp"

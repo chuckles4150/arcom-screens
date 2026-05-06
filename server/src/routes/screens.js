@@ -7,8 +7,11 @@ import multer from 'multer';
 import {
   getScreens, getScreen, addScreen, updateScreen, deleteScreen,
   logActivity, getActivity, getSnapshotAt, SCREENSHOTS_DIR,
+  appendMetricSample, getLatestMetricSample, getMetricSamples,
+  clearMetricSamples,
 } from '../storage.js';
 import { computeUptime, parseWindow } from '../uptime.js';
+import { computeMetricsWindow, parseMetricsWindow } from '../metrics.js';
 
 // ── Dashboard (auth'd) ───────────────────────────────────────────
 
@@ -36,6 +39,20 @@ dashboard.get('/:id/uptime', (req, res) => {
   if (!screen) return res.status(404).json({ error: 'not found' });
   const days = parseWindow(req.query.window) || 7;
   const result = computeUptime(getActivity(), screen, { now: new Date(), days });
+  res.json(result);
+});
+
+// Phase 2: per-screen rolling metrics — bandwidth, restarts, response time,
+// load, memory. Derived from the heartbeat sample ring buffer + activity log
+// (boot events). ?window=24h | 7d (default 24h).
+dashboard.get('/:id/metrics', (req, res) => {
+  const screen = getScreen(req.params.id);
+  if (!screen) return res.status(404).json({ error: 'not found' });
+  const window = parseMetricsWindow(req.query.window) || { hours: 24 };
+  const samples = getMetricSamples(screen.id);
+  const result = computeMetricsWindow(samples, getActivity(), screen.name, {
+    now: new Date(), window,
+  });
   res.json(result);
 });
 
@@ -102,6 +119,7 @@ dashboard.put('/:id', async (req, res) => {
 dashboard.delete('/:id', async (req, res) => {
   const removed = await deleteScreen(req.params.id);
   if (!removed) return res.status(404).json({ error: 'not found' });
+  await clearMetricSamples(removed.id);
   await logActivity({ type: 'remove', screen: removed.name, user: 'Chuck', detail: 'Screen removed' });
   res.json({ ok: true });
 });
@@ -119,8 +137,12 @@ dashboard.post('/:id/refresh', async (req, res) => {
 
 const piClient = express.Router();
 
+// Reboot detection grace: ignore uptime "going backwards" by less than this.
+// Allows for measurement noise + heartbeat-cadence delays.
+const REBOOT_GRACE_SEC = 60;
+
 piClient.post('/heartbeat', async (req, res) => {
-  const { hostname, currentUrl } = req.body;
+  const { hostname, currentUrl, metrics } = req.body;
   if (!hostname) return res.status(400).json({ error: 'missing hostname' });
 
   const screen = getScreens().find(s => s.hostname === hostname);
@@ -142,6 +164,26 @@ piClient.post('/heartbeat', async (req, res) => {
     await logActivity({ type: 'online', screen: screen.name, user: 'system', detail: 'Came online' });
   }
 
+  // Phase 2: ingest metrics, detect reboots, append to ring buffer.
+  if (metrics && typeof metrics === 'object') {
+    const prev = getLatestMetricSample(screen.id);
+    const prevUp = prev?.systemUptimeSec;
+    const currUp = metrics.systemUptimeSec;
+
+    if (Number.isFinite(prevUp) && Number.isFinite(currUp) &&
+        currUp + REBOOT_GRACE_SEC < prevUp) {
+      const downtimeSec = Math.max(0, Math.floor((now.getTime() - prev.ts) / 1000) - currUp);
+      await logActivity({
+        type: 'boot',
+        screen: screen.name,
+        user: 'system',
+        detail: `Pi rebooted (was up ${formatUptime(prevUp)}, downtime ~${formatUptime(downtimeSec)})`,
+      });
+    }
+
+    await appendMetricSample(screen.id, { ts: now.getTime(), ...metrics });
+  }
+
   res.json({
     id: screen.id,
     name: screen.name,
@@ -150,6 +192,14 @@ piClient.post('/heartbeat', async (req, res) => {
     forceRefreshAt: screen.forceRefreshAt || null,
   });
 });
+
+function formatUptime(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return '?';
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
+  return `${Math.floor(sec / 86400)}d`;
+}
 
 const upload = multer({
   storage: multer.diskStorage({

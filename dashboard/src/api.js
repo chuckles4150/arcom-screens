@@ -57,4 +57,8 @@ export const api = {
   networkSummary: () => request('GET', '/api/network/summary'),
   screenUptime: (id, window = '7d') =>
     request('GET', `/api/screens/${id}/uptime?window=${encodeURIComponent(window)}`),
+
+  // Phase-2 additions
+  screenMetrics: (id, window = '24h') =>
+    request('GET', `/api/screens/${id}/metrics?window=${encodeURIComponent(window)}`),
 };

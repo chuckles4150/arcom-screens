@@ -1,18 +1,39 @@
 [Unit]
 Description=Arcom Kiosk Display
-After=graphical.target network-online.target
+After=network-online.target systemd-user-sessions.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
+User=KIOSK_USER_PLACEHOLDER
+PAMName=login
+
+# X server runtime needs these on Pi OS Lite. install.sh sed-substitutes
+# /run/user/1000 with the actual UID for the kiosk user.
+Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=DISPLAY=:0
 Environment=SERVER=http://n8n.local:8080
-ExecStart=/home/pi/arcom-kiosk/kiosk.sh
+
+# startx launches an X session and runs kiosk.sh as the user's xinit-like
+# entrypoint. -- -nocursor hides the mouse pointer on Chromium.
+ExecStart=/usr/bin/startx /home/KIOSK_USER_PLACEHOLDER/arcom-kiosk/kiosk.sh -- -nocursor
+
+# Reliability: any non-zero exit (Chromium crash, X falling over, kiosk.sh
+# bug) is restarted with a 5s backoff. Three failures in 60s pauses for
+# 30s before retrying again so we don't burn flash with a tight loop.
 Restart=always
 RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Logging — appended via systemd-journald, plus a plain text log for
+# tail-friendliness. install.sh creates the file with the right ownership.
 StandardOutput=append:/var/log/arcom-kiosk.log
 StandardError=append:/var/log/arcom-kiosk.log
 
+# A clean stop kills the whole tree (chromium, scrot loops, watchdog).
+KillMode=mixed
+TimeoutStopSec=10
+
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target

@@ -6,15 +6,16 @@ import { T } from '../../theme.js';
 // concepts rather than raw event types.
 //
 // Kind groupings (kept in sync with kindOf below):
-//   incident → 'offline'
+//   incident → 'offline' | 'boot'
 //   refresh  → 'refresh'
-//   content  → 'edit'
+//   content  → 'edit' | 'rotation'
 //   system   → 'add' | 'remove' | 'online'
 export const KINDS = ['all', 'incident', 'refresh', 'content', 'system'];
 
 export function kindOf(event) {
   switch (event?.type) {
     case 'offline':       return 'incident';
+    case 'boot':          return 'incident';
     case 'refresh':       return 'refresh';
     case 'edit':          return 'content';
     case 'add':
