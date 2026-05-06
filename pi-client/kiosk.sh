@@ -21,6 +21,15 @@ URL_CHECK_TIMEOUT=8
 NET_IFACE_FILE="/tmp/arcom-kiosk-net-iface"
 LAG_FILE="/tmp/arcom-kiosk-last-lag-ms"
 
+# Tracks epoch seconds of the previous heartbeat — used to ask each log
+# source for "lines since then". On first run, falls back to (now - 60s).
+LAST_HB_FILE="/tmp/arcom-kiosk-last-hb"
+
+# Per-heartbeat caps so a flooded log source can't blow past the request body.
+LOG_CAP_JOURNAL=30
+LOG_CAP_DMESG=20
+LOG_CAP_SYSLOG=30
+
 CHROMIUM_FLAGS=(
   --kiosk
   --start-fullscreen
@@ -118,18 +127,78 @@ collect_metrics() {
      }'
 }
 
+# ── Log collection ───────────────────────────────────────────────
+# Pulls fresh lines from journal / dmesg / syslog since the previous
+# heartbeat. Each source is capped at a per-heartbeat line limit so a
+# chatty source can't blow past the request body size. The server's
+# ring buffer trims older lines anyway.
+collect_logs() {
+  local since_epoch
+  since_epoch=$(cat "$LAST_HB_FILE" 2>/dev/null || true)
+  if [[ -z "$since_epoch" || ! "$since_epoch" =~ ^[0-9]+$ ]]; then
+    since_epoch=$(( $(date +%s) - 60 ))
+  fi
+
+  local journal dmesg syslog
+
+  # Kiosk service journal — tagged + iso timestamps.
+  journal=$(journalctl -u arcom-kiosk --since="@$since_epoch" --no-pager \
+    -o short-iso --no-hostname 2>/dev/null \
+    | tail -n "$LOG_CAP_JOURNAL" \
+    | jq -Rsc 'split("\n") | map(select(length > 0))' \
+    || echo "[]")
+
+  # Kernel ring buffer.
+  dmesg=$(dmesg --since="30 sec ago" --time-format=iso --no-pager 2>/dev/null \
+    | tail -n "$LOG_CAP_DMESG" \
+    | jq -Rsc 'split("\n") | map(select(length > 0))' \
+    || echo "[]")
+
+  # Syslog — tail-then-filter by epoch. Syslog timestamps use the
+  # current year implicitly so we add it via `date -d` for parsing.
+  if [[ -r /var/log/syslog ]]; then
+    syslog=$(awk -v cutoff="$since_epoch" '
+      {
+        ts = $1 " " $2 " " $3
+        cmd = "date -d \"" ts "\" +%s 2>/dev/null"
+        cmd | getline epoch
+        close(cmd)
+        if (epoch >= cutoff) print
+      }' /var/log/syslog 2>/dev/null \
+      | tail -n "$LOG_CAP_SYSLOG" \
+      | jq -Rsc 'split("\n") | map(select(length > 0))' \
+      || echo "[]")
+  else
+    syslog="[]"
+  fi
+
+  jq -n \
+    --argjson j "$journal" \
+    --argjson d "$dmesg" \
+    --argjson s "$syslog" \
+    '{journal: $j, dmesg: $d, syslog: $s}'
+}
+
 # ── Heartbeat ─────────────────────────────────────────────────────
 heartbeat_loop() {
   while true; do
-    local current_url metrics body t0 t1 lag_ms
+    local current_url metrics logs body t0 t1 lag_ms hb_now
     current_url=$(cat "$LAST_URL_FILE" 2>/dev/null || echo "")
     metrics=$(collect_metrics)
+    logs=$(collect_logs)
 
     body=$(jq -n \
       --arg hostname "$HOSTNAME" \
       --arg currentUrl "$current_url" \
       --argjson metrics "$metrics" \
-      '{hostname: $hostname, currentUrl: $currentUrl, metrics: $metrics}')
+      --argjson logs "$logs" \
+      '{hostname: $hostname, currentUrl: $currentUrl, metrics: $metrics, logs: $logs}')
+
+    # Stash heartbeat epoch BEFORE the request so the next collect_logs
+    # picks up only lines emitted after this point. Tiny risk of missing
+    # a line written during the curl, but cheap to accept.
+    hb_now=$(date +%s)
+    echo "$hb_now" > "$LAST_HB_FILE"
 
     # Round-trip lag: report this cycle's RTT in the NEXT heartbeat's
     # metrics block (one cycle of staleness is fine — saves an extra

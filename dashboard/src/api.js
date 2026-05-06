@@ -61,4 +61,8 @@ export const api = {
   // Phase-2 additions
   screenMetrics: (id, window = '24h') =>
     request('GET', `/api/screens/${id}/metrics?window=${encodeURIComponent(window)}`),
+
+  // Phase-3 additions
+  screenLogs: (id, source, since = 0) =>
+    request('GET', `/api/screens/${id}/logs?source=${encodeURIComponent(source)}&since=${since}`),
 };

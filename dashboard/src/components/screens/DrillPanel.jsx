@@ -7,6 +7,7 @@ import { api } from '../../api.js';
 import { useFetch } from '../../hooks/useFetch.js';
 import { StatusChip } from './StatusChip.jsx';
 import { Sparkline } from './Sparkline.jsx';
+import { ConsoleModal } from './ConsoleModal.jsx';
 import { formatRelative, formatActivityTime } from '../../utils/time.js';
 
 export function DrillPanel({ screen, onClose, onEdit, onRefresh, onDeleted, onError }) {
@@ -16,6 +17,7 @@ export function DrillPanel({ screen, onClose, onEdit, onRefresh, onDeleted, onEr
 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(false);
 
   // Esc to close
   useEffect(() => {
@@ -42,6 +44,7 @@ export function DrillPanel({ screen, onClose, onEdit, onRefresh, onDeleted, onEr
   }
 
   return (
+    <>
     <div
       onClick={onClose}
       style={{
@@ -149,7 +152,13 @@ export function DrillPanel({ screen, onClose, onEdit, onRefresh, onDeleted, onEr
                 Open URL
               </ActionPill>
             )}
-            <ActionPill disabled title="Pi logs arrive in Phase 2" icon={<Terminal size={13} strokeWidth={1.75} />}>Console</ActionPill>
+            <ActionPill
+              onClick={() => setConsoleOpen(true)}
+              title="Live Pi logs (≈30 s latency)"
+              icon={<Terminal size={13} strokeWidth={1.75} />}
+            >
+              Console
+            </ActionPill>
           </div>
 
           {/* Stats grid: uptime + bandwidth + restarts + response time, plus an
@@ -255,6 +264,8 @@ export function DrillPanel({ screen, onClose, onEdit, onRefresh, onDeleted, onEr
         </div>
       </div>
     </div>
+    {consoleOpen && <ConsoleModal screen={screen} onClose={() => setConsoleOpen(false)} />}
+    </>
   );
 }
 

@@ -9,6 +9,7 @@ import {
   logActivity, getActivity, getSnapshotAt, SCREENSHOTS_DIR,
   appendMetricSample, getLatestMetricSample, getMetricSamples,
   clearMetricSamples,
+  LOG_SOURCES, appendLogLines, getLogLines, clearLogBuffers,
 } from '../storage.js';
 import { computeUptime, parseWindow } from '../uptime.js';
 import { computeMetricsWindow, parseMetricsWindow } from '../metrics.js';
@@ -54,6 +55,20 @@ dashboard.get('/:id/metrics', (req, res) => {
     now: new Date(), window,
   });
   res.json(result);
+});
+
+// Phase 3: live Pi logs. Pi piggybacks fresh lines on the heartbeat; this
+// endpoint returns whatever has accumulated in the in-memory ring buffer
+// since the caller's last `lastIdx`. `?source=journal|dmesg|syslog`.
+dashboard.get('/:id/logs', (req, res) => {
+  const screen = getScreen(req.params.id);
+  if (!screen) return res.status(404).json({ error: 'not found' });
+  const source = String(req.query.source || 'journal');
+  if (!LOG_SOURCES.includes(source)) {
+    return res.status(400).json({ error: 'unknown source', allowed: LOG_SOURCES });
+  }
+  const sinceIdx = parseInt(req.query.since, 10) || 0;
+  res.json(getLogLines(screen.id, source, sinceIdx));
 });
 
 dashboard.post('/', async (req, res) => {
@@ -120,6 +135,7 @@ dashboard.delete('/:id', async (req, res) => {
   const removed = await deleteScreen(req.params.id);
   if (!removed) return res.status(404).json({ error: 'not found' });
   await clearMetricSamples(removed.id);
+  clearLogBuffers(removed.id);
   await logActivity({ type: 'remove', screen: removed.name, user: 'Chuck', detail: 'Screen removed' });
   res.json({ ok: true });
 });
@@ -142,7 +158,7 @@ const piClient = express.Router();
 const REBOOT_GRACE_SEC = 60;
 
 piClient.post('/heartbeat', async (req, res) => {
-  const { hostname, currentUrl, metrics } = req.body;
+  const { hostname, currentUrl, metrics, logs } = req.body;
   if (!hostname) return res.status(400).json({ error: 'missing hostname' });
 
   const screen = getScreens().find(s => s.hostname === hostname);
@@ -182,6 +198,16 @@ piClient.post('/heartbeat', async (req, res) => {
     }
 
     await appendMetricSample(screen.id, { ts: now.getTime(), ...metrics });
+  }
+
+  // Phase 3: log lines piggyback on the heartbeat. Append per-source.
+  if (logs && typeof logs === 'object') {
+    for (const source of LOG_SOURCES) {
+      const lines = logs[source];
+      if (Array.isArray(lines) && lines.length > 0) {
+        appendLogLines(screen.id, source, lines);
+      }
+    }
   }
 
   res.json({

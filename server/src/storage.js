@@ -158,3 +158,64 @@ export async function clearMetricSamples(screenId) {
     await writeJson(METRICS_FILE, cache.metrics);
   }
 }
+
+// ── Log buffers (Phase 3) ─────────────────────────────────────────
+// In-memory only. Per (screen, source) ring buffer of recent log lines.
+// Server restart clears them; the next heartbeat refills.
+//
+// LOG_SOURCES are the values the Pi can send and the dashboard can fetch.
+// Anything outside the whitelist is dropped.
+
+export const LOG_SOURCES = ['journal', 'dmesg', 'syslog'];
+const MAX_LOG_LINES_PER_SOURCE = 500;
+
+// Internal: { [screenId]: { journal: { lines: [], totalAdded: N }, dmesg: ..., syslog: ... } }
+const logBuffers = {};
+
+function getOrInitBuffer(screenId, source) {
+  if (!logBuffers[screenId]) logBuffers[screenId] = {};
+  if (!logBuffers[screenId][source]) logBuffers[screenId][source] = { lines: [], totalAdded: 0 };
+  return logBuffers[screenId][source];
+}
+
+// Appends raw log lines for a source. `totalAdded` is a monotonic counter
+// the dashboard uses to ask "what's new since I last checked" — it survives
+// ring-buffer trims.
+export function appendLogLines(screenId, source, lines) {
+  if (!screenId || !LOG_SOURCES.includes(source) || !Array.isArray(lines) || lines.length === 0) return;
+  const buf = getOrInitBuffer(screenId, source);
+  for (const raw of lines) {
+    if (typeof raw !== 'string' || raw.length === 0) continue;
+    buf.lines.push(raw);
+    buf.totalAdded++;
+  }
+  if (buf.lines.length > MAX_LOG_LINES_PER_SOURCE) {
+    buf.lines.splice(0, buf.lines.length - MAX_LOG_LINES_PER_SOURCE);
+  }
+}
+
+// Returns `{ lines, lastIdx }` where `lastIdx` is the cumulative index of
+// the newest line. Pass that back as `sinceIdx` next time to get only what
+// arrived in between.
+export function getLogLines(screenId, source, sinceIdx = 0) {
+  if (!LOG_SOURCES.includes(source)) return { lines: [], lastIdx: 0 };
+  const buf = logBuffers[screenId]?.[source];
+  if (!buf) return { lines: [], lastIdx: 0 };
+  const total = buf.totalAdded;
+  const oldestIdxInBuffer = total - buf.lines.length; // first line in `lines` has this cumulative index
+  let startIdx;
+  if (sinceIdx <= oldestIdxInBuffer) {
+    // Caller has fallen behind — give them everything we have.
+    startIdx = 0;
+  } else {
+    startIdx = sinceIdx - oldestIdxInBuffer;
+  }
+  return {
+    lines: buf.lines.slice(startIdx),
+    lastIdx: total,
+  };
+}
+
+export function clearLogBuffers(screenId) {
+  if (logBuffers[screenId]) delete logBuffers[screenId];
+}
