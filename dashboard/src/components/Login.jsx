@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Lock, AlertCircle } from 'lucide-react';
 import { setStoredPassword, api } from '../api.js';
-import { T } from './styles.js';
+import { T } from '../theme.js';
 
 export function Login({ onSuccess }) {
   const [password, setPassword] = useState('');
@@ -14,12 +14,11 @@ export function Login({ onSuccess }) {
 
     setLoading(true);
     setError('');
-
     setStoredPassword(password);
     try {
       await api.ping();
       onSuccess();
-    } catch (err) {
+    } catch {
       setError('Incorrect password');
       setPassword('');
     } finally {
@@ -30,7 +29,7 @@ export function Login({ onSuccess }) {
   return (
     <div style={{
       minHeight: '100vh',
-      background: T.bone,
+      background: T.bgApp,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -38,70 +37,73 @@ export function Login({ onSuccess }) {
     }}>
       <div style={{
         width: '100%',
-        maxWidth: '420px',
-        background: T.white,
-        borderRadius: T.r3,
-        padding: T.s7,
-        border: `1px solid ${T.sand}`,
-        boxShadow: '0 4px 20px rgba(15, 26, 36, 0.04)',
+        maxWidth: 420,
+        background: T.bgSurface,
+        borderRadius: 14,
+        padding: T.s12,
+        border: `1px solid ${T.line2}`,
+        boxShadow: T.shadowMd,
       }}>
-        {/* Logo */}
+        {/* Brand */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
           gap: T.s3,
-          marginBottom: T.s7,
+          marginBottom: T.s10,
           paddingBottom: T.s5,
-          borderBottom: `1px solid ${T.sand}`,
+          borderBottom: `1px solid ${T.line1}`,
         }}>
           <div style={{
-            width: '40px',
-            height: '40px',
-            background: T.navyMid,
-            borderRadius: T.r2,
+            width: 40,
+            height: 40,
+            background: T.arcNavy,
+            borderRadius: T.radiusSm,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
           }}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <rect x="2" y="4" width="20" height="14" rx="1" stroke={T.bone} strokeWidth="1.5"/>
-              <path d="M8 18v3M16 18v3M6 21h12" stroke={T.bone} strokeWidth="1.5"/>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <rect x="2" y="4" width="20" height="14" rx="1" stroke={T.fgOnDark} strokeWidth="1.5"/>
+              <path d="M8 18v3M16 18v3M6 21h12" stroke={T.fgOnDark} strokeWidth="1.5"/>
             </svg>
           </div>
           <div>
             <div style={{
               fontFamily: T.fontDisplay,
-              fontWeight: 600,
-              fontSize: '13px',
+              fontWeight: 800,
+              fontSize: 13,
               letterSpacing: '0.16em',
-              color: T.navyMid,
+              color: T.fgBrand,
             }}>
               ARCOM SCREENS
             </div>
             <div style={{
-              fontSize: '11px',
-              color: T.taupe,
-              marginTop: '2px',
+              fontSize: 11,
+              color: T.fg3,
+              marginTop: 2,
+              fontFamily: T.fontMono,
             }}>
-              Display network
+              Display network · v2.1
             </div>
           </div>
         </div>
 
         <h1 style={{
           fontFamily: T.fontDisplay,
-          fontWeight: 600,
-          fontSize: '24px',
-          color: T.navyDeep,
+          fontWeight: 700,
+          fontSize: 26,
+          color: T.fgBrand,
           marginBottom: T.s2,
+          marginTop: 0,
           letterSpacing: '-0.01em',
         }}>
           Sign in
         </h1>
         <p style={{
-          fontSize: '14px',
-          color: T.taupe,
+          fontSize: 14,
+          color: T.fg3,
           marginBottom: T.s6,
+          marginTop: 0,
           lineHeight: 1.6,
         }}>
           Enter the dashboard password to manage office screens.
@@ -110,10 +112,10 @@ export function Login({ onSuccess }) {
         <form onSubmit={handleSubmit}>
           <label style={{
             fontFamily: T.fontDisplay,
-            fontSize: '11px',
-            fontWeight: 500,
+            fontSize: 11,
+            fontWeight: 700,
             letterSpacing: '0.1em',
-            color: T.taupe,
+            color: T.fgAccent,
             textTransform: 'uppercase',
             display: 'block',
             marginBottom: T.s2,
@@ -123,10 +125,10 @@ export function Login({ onSuccess }) {
           <div style={{ position: 'relative', marginBottom: T.s4 }}>
             <Lock size={18} style={{
               position: 'absolute',
-              left: '14px',
+              left: 14,
               top: '50%',
               transform: 'translateY(-50%)',
-              color: T.taupe,
+              color: T.fg3,
               pointerEvents: 'none',
             }} />
             <input
@@ -137,17 +139,17 @@ export function Login({ onSuccess }) {
               style={{
                 width: '100%',
                 padding: '12px 14px 12px 42px',
-                fontSize: '14px',
+                fontSize: 14,
                 fontFamily: T.fontBody,
-                color: T.navyDeep,
-                background: T.bone,
-                border: `1px solid ${T.sand}`,
-                borderRadius: T.r2,
+                color: T.fg1,
+                background: T.bgApp,
+                border: `1px solid ${T.line2}`,
+                borderRadius: T.radiusSm,
                 outline: 'none',
                 transition: 'border-color 150ms',
               }}
-              onFocus={(e) => e.target.style.borderColor = T.navyMid}
-              onBlur={(e) => e.target.style.borderColor = T.sand}
+              onFocus={(e) => e.target.style.borderColor = T.arcNavy}
+              onBlur={(e) => e.target.style.borderColor = T.line2}
             />
           </div>
 
@@ -157,11 +159,11 @@ export function Login({ onSuccess }) {
               alignItems: 'center',
               gap: T.s2,
               padding: '10px 14px',
-              background: 'rgba(192, 69, 40, 0.06)',
-              border: `1px solid rgba(192, 69, 40, 0.2)`,
-              borderRadius: T.r2,
-              fontSize: '13px',
-              color: T.brick,
+              background: T.statusDangerBg,
+              border: `1px solid ${T.statusDanger}33`,
+              borderRadius: T.radiusSm,
+              fontSize: 13,
+              color: T.statusDanger,
               marginBottom: T.s4,
             }}>
               <AlertCircle size={16} /> {error}
@@ -173,20 +175,20 @@ export function Login({ onSuccess }) {
             disabled={loading || !password}
             style={{
               width: '100%',
-              padding: '12px',
-              fontSize: '14px',
+              padding: 12,
+              fontSize: 14,
               fontFamily: T.fontDisplay,
-              fontWeight: 600,
-              letterSpacing: '0.02em',
-              color: T.bone,
-              background: loading || !password ? T.taupe : T.navyMid,
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+              color: T.fgOnDark,
+              background: loading || !password ? T.fg3 : T.arcNavy,
               border: 'none',
-              borderRadius: T.r2,
+              borderRadius: T.radiusSm,
               cursor: loading || !password ? 'not-allowed' : 'pointer',
               transition: 'background 150ms',
             }}
           >
-            {loading ? 'Checking...' : 'Sign in'}
+            {loading ? 'Checking…' : 'Sign in'}
           </button>
         </form>
       </div>

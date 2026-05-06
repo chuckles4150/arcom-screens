@@ -6,12 +6,17 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "express": "^4.21.0",
     "cors": "^2.8.5",
     "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.4"
   },
   "engines": {
     "node": ">=18"

@@ -6,21 +6,37 @@ import express from 'express';
 import multer from 'multer';
 import {
   getScreens, getScreen, addScreen, updateScreen, deleteScreen,
-  logActivity, SCREENSHOTS_DIR,
+  logActivity, getActivity, getSnapshotAt, SCREENSHOTS_DIR,
 } from '../storage.js';
+import { computeUptime, parseWindow } from '../uptime.js';
 
 // ── Dashboard (auth'd) ───────────────────────────────────────────
 
 const dashboard = express.Router();
 
-dashboard.get('/', (req, res) => {
-  res.json({ screens: getScreens() });
+async function decorateWithSnapshot(screen) {
+  return { ...screen, snapshotAt: await getSnapshotAt(screen.hostname) };
+}
+
+dashboard.get('/', async (req, res) => {
+  const screens = await Promise.all(getScreens().map(decorateWithSnapshot));
+  res.json({ screens });
 });
 
-dashboard.get('/:id', (req, res) => {
+dashboard.get('/:id', async (req, res) => {
   const screen = getScreen(req.params.id);
   if (!screen) return res.status(404).json({ error: 'not found' });
-  res.json(screen);
+  res.json(await decorateWithSnapshot(screen));
+});
+
+// Per-screen uptime % + daily history sparkline. Pure derivation from the
+// activity log + current state — no new storage. ?window=Nd (default 7d).
+dashboard.get('/:id/uptime', (req, res) => {
+  const screen = getScreen(req.params.id);
+  if (!screen) return res.status(404).json({ error: 'not found' });
+  const days = parseWindow(req.query.window) || 7;
+  const result = computeUptime(getActivity(), screen, { now: new Date(), days });
+  res.json(result);
 });
 
 dashboard.post('/', async (req, res) => {
