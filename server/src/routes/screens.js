@@ -10,9 +10,13 @@ import {
   appendMetricSample, getLatestMetricSample, getMetricSamples,
   clearMetricSamples,
   LOG_SOURCES, appendLogLines, getLogLines, clearLogBuffers,
+  getPlaylist, getSchedules, getSettings,
+  findOpenIncident, addIncident, updateIncident, deleteSchedulesForScreen,
 } from '../storage.js';
 import { computeUptime, parseWindow } from '../uptime.js';
 import { computeMetricsWindow, parseMetricsWindow } from '../metrics.js';
+import { pickActive } from '../scheduler.js';
+import { fireAlert, formatAlertMessage } from '../alerter.js';
 
 // ── Dashboard (auth'd) ───────────────────────────────────────────
 
@@ -99,7 +103,7 @@ dashboard.put('/:id', async (req, res) => {
   const before = getScreen(req.params.id);
   if (!before) return res.status(404).json({ error: 'not found' });
 
-  const { name, urls, refresh, location } = req.body;
+  const { name, urls, refresh, location, playlistId, scheduleEnabled } = req.body;
   const patch = {};
   const changes = [];
 
@@ -117,11 +121,19 @@ dashboard.put('/:id', async (req, res) => {
   }
   if (urls !== undefined && JSON.stringify(urls) !== JSON.stringify(before.urls)) {
     patch.urls = urls;
-    if (urls.length !== before.urls.length) {
-      changes.push(`URL count: ${before.urls.length} → ${urls.length}`);
+    if ((urls?.length || 0) !== (before.urls?.length || 0)) {
+      changes.push(`URL count: ${before.urls?.length || 0} → ${urls?.length || 0}`);
     } else {
       changes.push('URLs/durations updated');
     }
+  }
+  if (playlistId !== undefined && playlistId !== before.playlistId) {
+    patch.playlistId = playlistId || null;
+    changes.push(playlistId ? `Linked to playlist ${playlistId}` : 'Unlinked from playlist');
+  }
+  if (scheduleEnabled !== undefined && scheduleEnabled !== before.scheduleEnabled) {
+    patch.scheduleEnabled = !!scheduleEnabled;
+    changes.push(`Schedules ${scheduleEnabled ? 'enabled' : 'disabled'}`);
   }
 
   const updated = await updateScreen(req.params.id, patch);
@@ -136,6 +148,7 @@ dashboard.delete('/:id', async (req, res) => {
   if (!removed) return res.status(404).json({ error: 'not found' });
   await clearMetricSamples(removed.id);
   clearLogBuffers(removed.id);
+  await deleteSchedulesForScreen(removed.id);
   await logActivity({ type: 'remove', screen: removed.name, user: 'Chuck', detail: 'Screen removed' });
   res.json({ ok: true });
 });
@@ -178,6 +191,20 @@ piClient.post('/heartbeat', async (req, res) => {
 
   if (wasOffline) {
     await logActivity({ type: 'online', screen: screen.name, user: 'system', detail: 'Came online' });
+    // Phase 7: auto-resolve any open incident for this screen now that
+    // it's back. Notes/manual-status work is preserved by only resolving
+    // incidents that are still in `open` state.
+    const open = findOpenIncident(screen.id);
+    if (open && open.status === 'open') {
+      await updateIncident(open.id, {
+        status: 'resolved',
+        resolvedAt: now.toISOString(),
+        notes: [...(open.notes || []), {
+          ts: now.toISOString(), user: 'system',
+          text: 'Screen came back online — auto-resolved.',
+        }],
+      });
+    }
   }
 
   // Phase 2: ingest metrics, detect reboots, append to ring buffer.
@@ -195,6 +222,14 @@ piClient.post('/heartbeat', async (req, res) => {
         user: 'system',
         detail: `Pi rebooted (was up ${formatUptime(prevUp)}, downtime ~${formatUptime(downtimeSec)})`,
       });
+      // Phase 4: optional reboot alert.
+      const settings = getSettings();
+      if (settings.alertOnReboot) {
+        const message = formatAlertMessage(screen, 'boot', {
+          detail: `was up ${formatUptime(prevUp)}, downtime ~${formatUptime(downtimeSec)}`,
+        });
+        fireAlert({ settings, screen, kind: 'boot', message }).catch(() => {});
+      }
     }
 
     await appendMetricSample(screen.id, { ts: now.getTime(), ...metrics });
@@ -210,14 +245,40 @@ piClient.post('/heartbeat', async (req, res) => {
     }
   }
 
+  // Phase 5/6: resolve which URLs the Pi should display.
+  // Priority:
+  //   1. Active schedule (if any) → its playlist's URLs
+  //   2. Screen's default playlistId → that playlist's URLs
+  //   3. Screen's inline urls (Phase 1 behaviour)
+  const resolvedUrls = resolveScreenUrls(screen, now);
+
   res.json({
     id: screen.id,
     name: screen.name,
-    urls: screen.urls,
+    urls: resolvedUrls,
     refresh: screen.refresh,
     forceRefreshAt: screen.forceRefreshAt || null,
   });
 });
+
+// Returns the URL list to send back to the Pi, applying schedule and
+// playlist resolution. Always returns an array (possibly empty).
+function resolveScreenUrls(screen, now = new Date()) {
+  if (screen.scheduleEnabled !== false) {
+    const active = pickActive(getSchedules(), screen.id, now);
+    if (active) {
+      const playlist = getPlaylist(active.playlistId);
+      if (playlist?.urls?.length) return playlist.urls;
+    }
+  }
+  if (screen.playlistId) {
+    const playlist = getPlaylist(screen.playlistId);
+    if (playlist?.urls?.length) return playlist.urls;
+  }
+  return Array.isArray(screen.urls) ? screen.urls : [];
+}
+
+export { resolveScreenUrls };
 
 function formatUptime(sec) {
   if (!Number.isFinite(sec) || sec < 0) return '?';

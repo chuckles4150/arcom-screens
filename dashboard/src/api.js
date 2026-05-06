@@ -65,4 +65,34 @@ export const api = {
   // Phase-3 additions
   screenLogs: (id, source, since = 0) =>
     request('GET', `/api/screens/${id}/logs?source=${encodeURIComponent(source)}&since=${since}`),
+
+  // Phase-4: settings + alerts
+  getSettings: () => request('GET', '/api/settings'),
+  updateSettings: (patch) => request('PUT', '/api/settings', patch),
+  sendAlertTest: (body = {}) => request('POST', '/api/settings/alert-test', body),
+
+  // Phase-5: playlists
+  listPlaylists: () => request('GET', '/api/playlists').then(d => d.playlists),
+  getPlaylist:   (id) => request('GET', `/api/playlists/${id}`),
+  addPlaylist:   (playlist) => request('POST', '/api/playlists', playlist),
+  updatePlaylist:(id, patch) => request('PUT', `/api/playlists/${id}`, patch),
+  deletePlaylist:(id) => request('DELETE', `/api/playlists/${id}`),
+
+  // Phase-6: schedules
+  listSchedules: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request('GET', `/api/schedules${qs ? '?' + qs : ''}`).then(d => d.schedules);
+  },
+  addSchedule:   (schedule) => request('POST', '/api/schedules', schedule),
+  updateSchedule:(id, patch) => request('PUT', `/api/schedules/${id}`, patch),
+  deleteSchedule:(id) => request('DELETE', `/api/schedules/${id}`),
+
+  // Phase-7: incidents
+  listIncidents: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request('GET', `/api/incidents${qs ? '?' + qs : ''}`).then(d => d.incidents);
+  },
+  getIncident:   (id) => request('GET', `/api/incidents/${id}`),
+  updateIncident:(id, patch) => request('PUT', `/api/incidents/${id}`, patch),
+  addIncidentNote: (id, text) => request('POST', `/api/incidents/${id}/notes`, { text }),
 };

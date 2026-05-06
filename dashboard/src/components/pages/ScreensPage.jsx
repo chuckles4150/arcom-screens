@@ -109,7 +109,18 @@ export function ScreensPage({ search, onToast, onError, refreshSignal, openAddSi
             const first = screens.find(s => s.status === 'offline');
             if (first) setSelected(first);
           }}
-          onAlert={() => onToast?.('Team alerts arrive in Phase 2')}
+          onAlert={async () => {
+            const first = screens.find(s => s.status === 'offline');
+            try {
+              const result = await api.sendAlertTest({
+                screenId: first?.id, kind: 'manual',
+              });
+              if (result.fired) onToast?.('Alert sent');
+              else onError?.(`Alert not sent: ${result.reason || 'unknown'}`);
+            } catch (err) {
+              onError?.(err.message || 'Could not send alert');
+            }
+          }}
         />
       )}
 

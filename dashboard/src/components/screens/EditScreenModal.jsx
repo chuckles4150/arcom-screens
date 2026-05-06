@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Plus, ArrowUp, ArrowDown, X, Repeat } from 'lucide-react';
 import { T } from '../../theme.js';
 import { api } from '../../api.js';
+import { useFetch } from '../../hooks/useFetch.js';
 import { ModalShell, ModalFoot, Field, Input } from './AddScreenModal.jsx';
 
 // Edit existing screen. Supports rotation editing (multiple URLs with
@@ -13,6 +14,16 @@ export function EditScreenModal({ screen, onClose, onSaved, onError }) {
   const [refresh, setRefresh] = useState(screen.refresh);
   const [location, setLocation] = useState(screen.location || '');
   const [submitting, setSubmitting] = useState(false);
+
+  // Phase-5/6: source of truth for what plays on this screen.
+  // 'inline' = use the urls array below (Phase 1 behaviour, default).
+  // 'playlist' = pull URLs from a saved playlist by id.
+  const [source, setSource] = useState(screen.playlistId ? 'playlist' : 'inline');
+  const [playlistId, setPlaylistId] = useState(screen.playlistId || '');
+  const [scheduleEnabled, setScheduleEnabled] = useState(screen.scheduleEnabled !== false);
+
+  const playlistsQ = useFetch(() => api.listPlaylists(), []);
+  const playlists = playlistsQ.data || [];
 
   const isRotating = urls.length > 1;
 
@@ -32,12 +43,19 @@ export function EditScreenModal({ screen, onClose, onSaved, onError }) {
     if (submitting) return;
     setSubmitting(true);
     try {
-      const updated = await api.updateScreen(screen.id, {
+      const patch = {
         name,
-        urls,
         refresh: parseInt(refresh, 10) || 0,
         location,
-      });
+        scheduleEnabled,
+      };
+      if (source === 'playlist') {
+        patch.playlistId = playlistId || null;
+      } else {
+        patch.urls = urls;
+        patch.playlistId = null;
+      }
+      const updated = await api.updateScreen(screen.id, patch);
       onSaved?.(updated);
     } catch (err) {
       onError?.(err.message || 'Could not save changes');
@@ -52,6 +70,67 @@ export function EditScreenModal({ screen, onClose, onSaved, onError }) {
           <Input value={name} onChange={setName} />
         </Field>
 
+        {/* Phase-5: source picker (inline URLs vs saved playlist) */}
+        <Field label="Content source">
+          <div style={{
+            display: 'flex',
+            background: T.bgSurfaceAlt,
+            borderRadius: 999,
+            padding: 3,
+            border: `1px solid ${T.line1}`,
+            alignSelf: 'flex-start',
+          }}>
+            {[
+              { id: 'inline',   label: 'Inline URLs' },
+              { id: 'playlist', label: 'Use a playlist' },
+            ].map(opt => {
+              const active = source === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setSource(opt.id)}
+                  style={{
+                    padding: '7px 14px',
+                    fontFamily: T.fontDisplay, fontSize: 12, fontWeight: 700, letterSpacing: '0.04em',
+                    color: active ? T.fgBrand : T.fg3,
+                    background: active ? T.bgSurface : 'transparent',
+                    borderRadius: 999, border: 'none',
+                    boxShadow: active ? T.shadowXs : 'none',
+                  }}
+                >{opt.label}</button>
+              );
+            })}
+          </div>
+        </Field>
+
+        {source === 'playlist' && (
+          <Field label="Playlist">
+            {playlists.length === 0 ? (
+              <p style={{ margin: 0, fontSize: 13, color: T.fg3 }}>
+                No playlists yet — create one on the Playlists page first.
+              </p>
+            ) : (
+              <select
+                value={playlistId}
+                onChange={(e) => setPlaylistId(e.target.value)}
+                style={{
+                  height: 40, padding: '0 14px',
+                  border: `1px solid ${T.line2}`, borderRadius: T.radiusSm,
+                  background: T.bgSurface, color: T.fg1,
+                  fontFamily: T.fontBody, fontSize: 14, outline: 'none',
+                }}
+              >
+                <option value="">— pick a playlist —</option>
+                {playlists.map(p => (
+                  <option key={p.id} value={p.id}>{p.name} ({p.urls?.length || 0} URLs)</option>
+                ))}
+              </select>
+            )}
+          </Field>
+        )}
+
+        {source === 'inline' && (
         <div>
           <div style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -147,6 +226,7 @@ export function EditScreenModal({ screen, onClose, onSaved, onError }) {
             {isRotating ? 'Add another URL' : 'Add second URL (start rotation)'}
           </button>
         </div>
+        )}
 
         <Field
           label={isRotating ? 'Page reload interval (minutes)' : 'Refresh interval (minutes)'}
@@ -160,6 +240,28 @@ export function EditScreenModal({ screen, onClose, onSaved, onError }) {
         <Field label="Location">
           <Input value={location} onChange={setLocation} />
         </Field>
+
+        {/* Phase-6: schedule override toggle */}
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '12px 14px', border: `1px solid ${T.line1}`,
+          borderRadius: 10, background: T.bgSurfaceAlt, cursor: 'pointer',
+        }}>
+          <input
+            type="checkbox"
+            checked={scheduleEnabled}
+            onChange={(e) => setScheduleEnabled(e.target.checked)}
+            style={{ width: 16, height: 16 }}
+          />
+          <div style={{ flex: 1 }}>
+            <div style={{
+              fontFamily: T.fontDisplay, fontSize: 12, fontWeight: 700, color: T.fg1,
+            }}>Apply schedules</div>
+            <div style={{ fontSize: 11.5, color: T.fg3, lineHeight: 1.5 }}>
+              When on, time-based blocks from the Schedules page take priority over the source above.
+            </div>
+          </div>
+        </label>
 
         <MetaCard screen={screen} />
 

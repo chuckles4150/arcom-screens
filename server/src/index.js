@@ -10,6 +10,10 @@ import { fileURLToPath } from 'url';
 import { screensRouter } from './routes/screens.js';
 import { activityRouter } from './routes/activity.js';
 import { networkRouter } from './routes/network.js';
+import { playlistsRouter } from './routes/playlists.js';
+import { schedulesRouter } from './routes/schedules.js';
+import { incidentsRouter } from './routes/incidents.js';
+import { settingsRouter } from './routes/settings.js';
 import { authMiddleware } from './middleware/auth.js';
 import { initStorage } from './storage.js';
 import { startWatchdog } from './watchdog.js';
@@ -43,6 +47,10 @@ app.use('/api', authMiddleware);
 app.use('/api/screens', screensRouter.dashboard);
 app.use('/api/activity', activityRouter);
 app.use('/api/network', networkRouter);
+app.use('/api/playlists', playlistsRouter);
+app.use('/api/schedules', schedulesRouter);
+app.use('/api/incidents', incidentsRouter);
+app.use('/api/settings', settingsRouter);
 
 // ── Static screenshots ────────────────────────────────────────────
 

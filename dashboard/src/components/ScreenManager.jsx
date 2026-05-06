@@ -6,6 +6,9 @@ import { Topbar } from './Topbar.jsx';
 import { ScreensPage } from './pages/ScreensPage.jsx';
 import { ActivityPage } from './pages/ActivityPage.jsx';
 import { SettingsPage } from './pages/SettingsPage.jsx';
+import { PlaylistsPage } from './pages/PlaylistsPage.jsx';
+import { SchedulesPage } from './pages/SchedulesPage.jsx';
+import { IncidentsPage } from './pages/IncidentsPage.jsx';
 import { api } from '../api.js';
 import { useFetch } from '../hooks/useFetch.js';
 
@@ -76,7 +79,10 @@ export default function ScreenManager() {
           />
         )}
         {nav === 'activity' && <ActivityPage onError={showError} />}
-        {nav === 'settings' && <SettingsPage />}
+        {nav === 'playlists' && <PlaylistsPage onToast={showToast} onError={showError} />}
+        {nav === 'schedules' && <SchedulesPage onToast={showToast} onError={showError} />}
+        {nav === 'incidents' && <IncidentsPage onToast={showToast} onError={showError} />}
+        {nav === 'settings'  && <SettingsPage  onToast={showToast} onError={showError} />}
       </main>
 
       {toast && <Toast {...toast} />}

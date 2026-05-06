@@ -1,13 +1,19 @@
 import React from 'react';
-import { Monitor, Activity, Settings, LogOut } from 'lucide-react';
+import {
+  Monitor, Activity, Settings, LogOut,
+  ListVideo, CalendarClock, AlertTriangle,
+} from 'lucide-react';
 import { T } from '../theme.js';
 import { StatusDot } from './screens/StatusChip.jsx';
 import { clearStoredPassword } from '../api.js';
 
 const NAV_ITEMS = [
-  { id: 'screens',  label: 'Screens',  icon: Monitor  },
-  { id: 'activity', label: 'Activity', icon: Activity },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'screens',   label: 'Screens',   icon: Monitor        },
+  { id: 'activity',  label: 'Activity',  icon: Activity       },
+  { id: 'playlists', label: 'Playlists', icon: ListVideo      },
+  { id: 'schedules', label: 'Schedules', icon: CalendarClock  },
+  { id: 'incidents', label: 'Incidents', icon: AlertTriangle  },
+  { id: 'settings',  label: 'Settings',  icon: Settings       },
 ];
 
 export function Sidebar({ active, onNav, screenCount }) {

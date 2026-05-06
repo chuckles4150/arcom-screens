@@ -10,16 +10,31 @@ const DATA_DIR = path.resolve(__dirname, '../data');
 const SCREENS_FILE = path.join(DATA_DIR, 'screens.json');
 const ACTIVITY_FILE = path.join(DATA_DIR, 'activity.json');
 const METRICS_FILE = path.join(DATA_DIR, 'metrics.json');
+const PLAYLISTS_FILE = path.join(DATA_DIR, 'playlists.json');
+const SCHEDULES_FILE = path.join(DATA_DIR, 'schedules.json');
+const INCIDENTS_FILE = path.join(DATA_DIR, 'incidents.json');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const SCREENSHOTS_DIR = path.join(DATA_DIR, 'screenshots');
 
 // Per-screen ring buffer cap. At 30s heartbeat that's ~42 hours of samples,
 // comfortably more than the 24h window the dashboard renders.
 const MAX_METRIC_SAMPLES = 5000;
 
+const DEFAULT_SETTINGS = {
+  alertWebhookUrl: '',
+  alertOnOffline: true,
+  alertOnReboot: false,
+  alertCooldownMinutes: 5,
+};
+
 const cache = {
   screens: [],
   activity: [],
-  metrics: {}, // screenId → array of samples, newest first
+  metrics: {},     // screenId → array of samples, newest first
+  playlists: [],
+  schedules: [],
+  incidents: [],
+  settings: { ...DEFAULT_SETTINGS },
 };
 
 export async function initStorage() {
@@ -29,9 +44,13 @@ export async function initStorage() {
   cache.screens = await readJson(SCREENS_FILE, []);
   cache.activity = await readJson(ACTIVITY_FILE, []);
   cache.metrics = await readJson(METRICS_FILE, {});
+  cache.playlists = await readJson(PLAYLISTS_FILE, []);
+  cache.schedules = await readJson(SCHEDULES_FILE, []);
+  cache.incidents = await readJson(INCIDENTS_FILE, []);
+  cache.settings = { ...DEFAULT_SETTINGS, ...(await readJson(SETTINGS_FILE, {})) };
 
   const sampleCount = Object.values(cache.metrics).reduce((n, arr) => n + arr.length, 0);
-  console.log(`storage: loaded ${cache.screens.length} screens, ${cache.activity.length} activity entries, ${sampleCount} metric samples`);
+  console.log(`storage: loaded ${cache.screens.length} screens, ${cache.activity.length} activity entries, ${sampleCount} metric samples, ${cache.playlists.length} playlists, ${cache.schedules.length} schedules, ${cache.incidents.length} incidents`);
 }
 
 async function readJson(file, fallback) {
@@ -218,4 +237,115 @@ export function getLogLines(screenId, source, sinceIdx = 0) {
 
 export function clearLogBuffers(screenId) {
   if (logBuffers[screenId]) delete logBuffers[screenId];
+}
+
+// ── Playlists ─────────────────────────────────────────────────────
+
+export function getPlaylists() { return cache.playlists; }
+export function getPlaylist(id) { return cache.playlists.find(p => p.id === id); }
+
+export async function addPlaylist(playlist) {
+  cache.playlists.push(playlist);
+  await writeJson(PLAYLISTS_FILE, cache.playlists);
+  return playlist;
+}
+
+export async function updatePlaylist(id, patch) {
+  const idx = cache.playlists.findIndex(p => p.id === id);
+  if (idx === -1) return null;
+  cache.playlists[idx] = { ...cache.playlists[idx], ...patch };
+  await writeJson(PLAYLISTS_FILE, cache.playlists);
+  return cache.playlists[idx];
+}
+
+export async function deletePlaylist(id) {
+  const idx = cache.playlists.findIndex(p => p.id === id);
+  if (idx === -1) return null;
+  const removed = cache.playlists.splice(idx, 1)[0];
+  await writeJson(PLAYLISTS_FILE, cache.playlists);
+  return removed;
+}
+
+// ── Schedules ─────────────────────────────────────────────────────
+
+export function getSchedules() { return cache.schedules; }
+export function getSchedule(id) { return cache.schedules.find(s => s.id === id); }
+export function getSchedulesForScreen(screenId) {
+  return cache.schedules.filter(s => s.screenId === screenId);
+}
+
+export async function addSchedule(schedule) {
+  cache.schedules.push(schedule);
+  await writeJson(SCHEDULES_FILE, cache.schedules);
+  return schedule;
+}
+
+export async function updateSchedule(id, patch) {
+  const idx = cache.schedules.findIndex(s => s.id === id);
+  if (idx === -1) return null;
+  cache.schedules[idx] = { ...cache.schedules[idx], ...patch };
+  await writeJson(SCHEDULES_FILE, cache.schedules);
+  return cache.schedules[idx];
+}
+
+export async function deleteSchedule(id) {
+  const idx = cache.schedules.findIndex(s => s.id === id);
+  if (idx === -1) return null;
+  const removed = cache.schedules.splice(idx, 1)[0];
+  await writeJson(SCHEDULES_FILE, cache.schedules);
+  return removed;
+}
+
+export async function deleteSchedulesForScreen(screenId) {
+  const before = cache.schedules.length;
+  cache.schedules = cache.schedules.filter(s => s.screenId !== screenId);
+  if (cache.schedules.length !== before) {
+    await writeJson(SCHEDULES_FILE, cache.schedules);
+  }
+}
+
+// ── Incidents ─────────────────────────────────────────────────────
+
+const MAX_INCIDENTS = 200;
+
+export function getIncidents() { return cache.incidents; }
+export function getIncident(id) { return cache.incidents.find(i => i.id === id); }
+export function findOpenIncident(screenId, type) {
+  return cache.incidents.find(
+    i => i.screenId === screenId && (!type || i.type === type) && i.status !== 'resolved'
+  );
+}
+
+export async function addIncident(incident) {
+  cache.incidents.unshift(incident);
+  if (cache.incidents.length > MAX_INCIDENTS) {
+    cache.incidents = cache.incidents.slice(0, MAX_INCIDENTS);
+  }
+  await writeJson(INCIDENTS_FILE, cache.incidents);
+  return incident;
+}
+
+export async function updateIncident(id, patch) {
+  const idx = cache.incidents.findIndex(i => i.id === id);
+  if (idx === -1) return null;
+  cache.incidents[idx] = { ...cache.incidents[idx], ...patch };
+  await writeJson(INCIDENTS_FILE, cache.incidents);
+  return cache.incidents[idx];
+}
+
+export async function appendIncidentNote(id, note) {
+  const inc = getIncident(id);
+  if (!inc) return null;
+  const notes = [...(inc.notes || []), note];
+  return updateIncident(id, { notes });
+}
+
+// ── Settings ──────────────────────────────────────────────────────
+
+export function getSettings() { return cache.settings; }
+
+export async function updateSettings(patch) {
+  cache.settings = { ...cache.settings, ...patch };
+  await writeJson(SETTINGS_FILE, cache.settings);
+  return cache.settings;
 }
