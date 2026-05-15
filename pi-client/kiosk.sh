@@ -141,18 +141,32 @@ collect_logs() {
 
   local journal dmesg syslog
 
+  # `$( pipeline || echo "[]" )` looks like a fallback but is buggy with
+  # `set -euo pipefail`: when the pipeline fails (e.g. dmesg returns
+  # "Operation not permitted" on Pi OS Lite where kernel.dmesg_restrict
+  # is the default), the final jq stage has ALREADY emitted "[]" from
+  # empty input, then `|| echo "[]"` appends ANOTHER "[]". The capture
+  # is "[]\n[]" — two JSON values concatenated — which downstream
+  # `--argjson` rejects with "invalid JSON text passed to --argjson".
+  # That kills heartbeat_loop on the first iteration, the kiosk never
+  # gets a config, and the screen sits blank forever.
+  #
+  # Fix: trail each pipeline with `|| true` (set-e safe), capture
+  # whatever jq emitted, then normalize empty to "[]" outside the
+  # subshell. Single source of the fallback, no concatenation.
+
   # Kiosk service journal — tagged + iso timestamps.
   journal=$(journalctl -u arcom-kiosk --since="@$since_epoch" --no-pager \
     -o short-iso --no-hostname 2>/dev/null \
     | tail -n "$LOG_CAP_JOURNAL" \
-    | jq -Rsc 'split("\n") | map(select(length > 0))' \
-    || echo "[]")
+    | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null || true)
+  [[ -z "$journal" ]] && journal="[]"
 
   # Kernel ring buffer.
   dmesg=$(dmesg --since="30 sec ago" --time-format=iso --no-pager 2>/dev/null \
     | tail -n "$LOG_CAP_DMESG" \
-    | jq -Rsc 'split("\n") | map(select(length > 0))' \
-    || echo "[]")
+    | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null || true)
+  [[ -z "$dmesg" ]] && dmesg="[]"
 
   # Syslog — tail-then-filter by epoch. Syslog timestamps use the
   # current year implicitly so we add it via `date -d` for parsing.
@@ -166,8 +180,8 @@ collect_logs() {
         if (epoch >= cutoff) print
       }' /var/log/syslog 2>/dev/null \
       | tail -n "$LOG_CAP_SYSLOG" \
-      | jq -Rsc 'split("\n") | map(select(length > 0))' \
-      || echo "[]")
+      | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null || true)
+    [[ -z "$syslog" ]] && syslog="[]"
   else
     syslog="[]"
   fi
