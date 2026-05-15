@@ -7,6 +7,13 @@ Wants=network-online.target
 # start, and prevents it from starting while we're running.
 Conflicts=getty@tty1.service
 
+# Crash-loop rate limit. These belong in [Unit], not [Service] — they
+# describe systemd's restart logic for the unit as a whole. If a
+# misconfigured server URL or a broken kiosk.sh causes Restart=always
+# to loop, this caps it at 3 failures per 60s before pausing.
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
 [Service]
 Type=simple
 User=KIOSK_USER_PLACEHOLDER
@@ -44,12 +51,10 @@ Environment=SERVER=http://n8n.local:8080
 ExecStart=/usr/bin/startx /home/KIOSK_USER_PLACEHOLDER/arcom-kiosk/kiosk.sh -- vt1 -keeptty -nocursor
 
 # Reliability: any non-zero exit (Chromium crash, X falling over, kiosk.sh
-# bug) is restarted with a 5s backoff. Three failures in 60s pauses for
-# 30s before retrying again so we don't burn flash with a tight loop.
+# bug) is restarted with a 5s backoff. The crash-loop rate limit is set
+# in the [Unit] section (StartLimitIntervalSec / StartLimitBurst).
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=3
 
 # Logging — appended via systemd-journald, plus a plain text log for
 # tail-friendliness. install.sh creates the file with the right ownership.
