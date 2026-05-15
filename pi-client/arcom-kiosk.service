@@ -43,12 +43,26 @@ Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=DISPLAY=:0
 Environment=SERVER=http://n8n.local:8080
 
+# Before launching, clean up any leftover X server state from a previous
+# run. /tmp is tmpfs on Pi OS so a reboot already clears these — this
+# matters when systemd restarts us within the same boot (crash recovery
+# via Restart=always, or `sudo pkill Xorg`). Without it, startx would
+# auto-bump to display :1 when /tmp/.X0-lock still exists, but kiosk.sh
+# and Environment=DISPLAY=:0 expect :0, so Chromium would fail to
+# connect.
+#
+# `+` prefix runs as root regardless of User= (the lock files are
+# created by Xorg-as-root since Xwrapper has needs_root_rights=yes).
+# `-` prefix would ignore non-zero exit, but `rm -f` already exits 0
+# when files are missing, so no `-` needed.
+ExecStartPre=+/bin/rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
+
 # startx launches an X session and runs kiosk.sh as the user's xinit-like
 # entrypoint. The flags after `--` go to Xorg itself:
 #   vt1       — use the VT systemd handed us, don't allocate a new one
 #   -keeptty  — don't switch VTs at startup (would break our TTY binding)
 #   -nocursor — hide the mouse pointer
-ExecStart=/usr/bin/startx /home/KIOSK_USER_PLACEHOLDER/arcom-kiosk/kiosk.sh -- vt1 -keeptty -nocursor
+ExecStart=/usr/bin/startx /home/KIOSK_USER_PLACEHOLDER/arcom-kiosk/kiosk.sh -- :0 vt1 -keeptty -nocursor
 
 # Reliability: any non-zero exit (Chromium crash, X falling over, kiosk.sh
 # bug) is restarted with a 5s backoff. The crash-loop rate limit is set
