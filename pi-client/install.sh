@@ -26,7 +26,7 @@ echo "Installing for user: $KIOSK_USER (uid $KIOSK_UID)"
 echo
 
 # 1. Install dependencies
-echo "[1/7] Installing packages..."
+echo "[1/9] Installing packages..."
 apt-get update
 apt-get install -y --no-install-recommends \
   xserver-xorg \
@@ -41,41 +41,56 @@ apt-get install -y --no-install-recommends \
   bc
 
 # 2. Allow non-root users to start X server (required for systemd to startx)
-echo "[2/7] Allowing X server start by users..."
+echo "[2/9] Allowing X server start by users..."
 cat > /etc/X11/Xwrapper.config <<EOF
 allowed_users=anybody
 needs_root_rights=yes
 EOF
 
 # 3. Set up the kiosk directory
-echo "[3/7] Setting up kiosk directory..."
+echo "[3/9] Setting up kiosk directory..."
 mkdir -p "$INSTALL_DIR"
 cp "$REPO_DIR/kiosk.sh" "$INSTALL_DIR/kiosk.sh"
 chmod +x "$INSTALL_DIR/kiosk.sh"
 chown -R "$KIOSK_USER:$KIOSK_USER" "$INSTALL_DIR"
 
-# 4. Disable any existing tty1 auto-login (we replace it with the systemd service)
-echo "[4/7] Removing legacy auto-login..."
+# 4. Disable the tty1 login prompt entirely. The kiosk service owns tty1,
+#    and the unit's Conflicts=getty@tty1.service makes the race impossible
+#    at runtime — but for clarity we also disable getty@tty1 outright so
+#    it never tries to start on boot.
+echo "[4/9] Disabling getty@tty1 and removing legacy autologin..."
 rm -f /etc/systemd/system/getty@tty1.service.d/override.conf
 rm -f "$KIOSK_HOME/.bash_profile"
 rm -f "$KIOSK_HOME/.xinitrc"
+systemctl disable --now getty@tty1.service 2>/dev/null || true
 systemctl daemon-reload
 
-# 5. Install the systemd service
-echo "[5/7] Installing arcom-kiosk.service..."
+# 5. Enable linger so /run/user/$UID is created at boot and persists
+#    even though no human ever logs in. Replaces what PAMName=login
+#    used to give us.
+echo "[5/9] Enabling user linger for $KIOSK_USER..."
+loginctl enable-linger "$KIOSK_USER"
+
+# 6. Install the systemd service
+echo "[6/9] Installing arcom-kiosk.service..."
 sed "s|KIOSK_USER_PLACEHOLDER|$KIOSK_USER|g; s|XDG_RUNTIME_DIR=/run/user/1000|XDG_RUNTIME_DIR=/run/user/$KIOSK_UID|" \
   "$REPO_DIR/arcom-kiosk.service" > /etc/systemd/system/arcom-kiosk.service
 
 systemctl daemon-reload
 systemctl enable arcom-kiosk.service
 
-# 6. Set up logging
-echo "[6/7] Setting up logging..."
+# 7. Set up logging
+echo "[7/9] Setting up logging..."
 touch /var/log/arcom-kiosk.log
 chown "$KIOSK_USER:$KIOSK_USER" /var/log/arcom-kiosk.log
 
-# 7. Done
-echo "[7/7] Done."
+# 8. Boot directly into graphical mode. The kiosk unit's
+#    WantedBy=graphical.target means this is where it gets pulled in.
+echo "[8/9] Setting default systemd target to graphical..."
+systemctl set-default graphical.target
+
+# 9. Done
+echo "[9/9] Done."
 echo
 echo "── Next steps ──"
 echo "1. Set the server URL in: $INSTALL_DIR/kiosk.sh"
