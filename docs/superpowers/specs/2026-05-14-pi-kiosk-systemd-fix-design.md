@@ -84,11 +84,19 @@ Belt-and-suspenders changes. Each one addresses a specific cause above.
 - **Change** `ExecStart` so the flags after `--` are passed to Xorg:
 
   ```ini
-  ExecStart=/usr/bin/startx /home/KIOSK_USER_PLACEHOLDER/arcom-kiosk/kiosk.sh -- vt1 -keeptty -nocursor
+  ExecStart=/usr/bin/startx /home/KIOSK_USER_PLACEHOLDER/arcom-kiosk/kiosk.sh -- :0 vt1 -keeptty -nocursor
   ```
 
-  `vt1` tells Xorg explicitly which VT to use; `-keeptty` stops it from
+  `:0` pins the display number explicitly (without it, startx auto-bumps
+  to `:1` if a stale `/tmp/.X0-lock` from a previous run exists, but
+  `kiosk.sh` hardcodes `DISPLAY=:0` so Chromium would then fail to
+  connect). `vt1` tells Xorg which VT to use; `-keeptty` stops it from
   doing an extra VT switch that breaks the systemd-supplied TTY binding.
+- **Add** `ExecStartPre=+/bin/rm -f /tmp/.X0-lock /tmp/.X11-unix/X0` so
+  stale X locks from a previous Xorg run are cleared before each start.
+  Required for `pkill Xorg`-style crash recovery within the same boot.
+  The `+` prefix runs the rm as root (the lock files are owned by Xorg-
+  as-root via Xwrapper's `needs_root_rights=yes`).
 - **Change** `WantedBy=multi-user.target` → `WantedBy=graphical.target`.
 
 Restart policy (`Restart=always`, 5s backoff, 3-burst-in-60s limit) is
