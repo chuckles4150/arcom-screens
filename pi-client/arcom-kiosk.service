@@ -1,22 +1,47 @@
 [Unit]
 Description=Arcom Kiosk Display
-After=network-online.target systemd-user-sessions.service
+After=network-online.target systemd-user-sessions.service getty@tty1.service
 Wants=network-online.target
+# We own tty1; getty must not be running while we are. The Conflicts=
+# directive makes systemd stop getty@tty1 if it's somehow up when we
+# start, and prevents it from starting while we're running.
+Conflicts=getty@tty1.service
 
 [Service]
 Type=simple
 User=KIOSK_USER_PLACEHOLDER
-PAMName=login
+WorkingDirectory=/home/KIOSK_USER_PLACEHOLDER
 
-# X server runtime needs these on Pi OS Lite. install.sh sed-substitutes
-# /run/user/1000 with the actual UID for the kiosk user.
+# tty: needed for /dev/tty1 ioctls Xorg performs during VT setup.
+# video, render: needed for /dev/dri/* (KMS / DRM) on modern kernels.
+# input: needed for evdev access to keyboard/mouse without root.
+SupplementaryGroups=tty video input render
+
+# Hand the kiosk an explicit TTY so Xorg's parse_vt_settings() can find
+# a free VT, and so we own /dev/tty1 unambiguously (the Conflicts=
+# directive above stops getty@tty1 from fighting us for it).
+# tty-fail (not tty) makes the service refuse to start if the TTY is
+# still held by something else — fast loud failure beats silent SIGHUP.
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+UnsetEnvironment=TERM
+
+# install.sh sed-substitutes /run/user/1000 with the actual UID for the
+# kiosk user. loginctl enable-linger (also in install.sh) creates the
+# directory at boot — we used to get this for free from PAMName=login.
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=DISPLAY=:0
 Environment=SERVER=http://n8n.local:8080
 
 # startx launches an X session and runs kiosk.sh as the user's xinit-like
-# entrypoint. -- -nocursor hides the mouse pointer on Chromium.
-ExecStart=/usr/bin/startx /home/KIOSK_USER_PLACEHOLDER/arcom-kiosk/kiosk.sh -- -nocursor
+# entrypoint. The flags after `--` go to Xorg itself:
+#   vt1       — use the VT systemd handed us, don't allocate a new one
+#   -keeptty  — don't switch VTs at startup (would break our TTY binding)
+#   -nocursor — hide the mouse pointer
+ExecStart=/usr/bin/startx /home/KIOSK_USER_PLACEHOLDER/arcom-kiosk/kiosk.sh -- vt1 -keeptty -nocursor
 
 # Reliability: any non-zero exit (Chromium crash, X falling over, kiosk.sh
 # bug) is restarted with a 5s backoff. Three failures in 60s pauses for
@@ -36,4 +61,4 @@ KillMode=mixed
 TimeoutStopSec=10
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
