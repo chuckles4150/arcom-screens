@@ -9,6 +9,18 @@
 
 set -euo pipefail
 
+# Route all stdout/stderr through systemd-cat so log() output reaches
+# journald (and the dashboard Console view via collect_logs).
+#
+# Why this exists: startx → xinit redirects child stdout/stderr to
+# ~/.local/share/xorg/Xorg.0.log, so without this exec the kiosk
+# script's output would never reach the journal — even though the unit
+# now leaves StandardOutput/Error at the systemd default. The
+# systemd-cat process runs inside the service's cgroup, so journald
+# auto-tags entries with _SYSTEMD_UNIT=arcom-kiosk.service, which means
+# `journalctl -u arcom-kiosk` (used by collect_logs) picks them up.
+exec > >(systemd-cat -t arcom-kiosk -p info) 2>&1
+
 # ── Config ────────────────────────────────────────────────────────
 SERVER="${SERVER:-http://n8n.local:8080}"
 HOSTNAME="$(hostname)"
