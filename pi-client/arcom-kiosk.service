@@ -70,10 +70,16 @@ ExecStart=/usr/bin/startx /home/KIOSK_USER_PLACEHOLDER/arcom-kiosk/kiosk.sh -- :
 Restart=always
 RestartSec=5
 
-# Logging — appended via systemd-journald, plus a plain text log for
-# tail-friendliness. install.sh creates the file with the right ownership.
-StandardOutput=append:/var/log/arcom-kiosk.log
-StandardError=append:/var/log/arcom-kiosk.log
+# Logging — stdout/stderr flow into systemd-journald (the default when
+# StandardOutput/Error are unset). This means kiosk.sh's log() lines
+# (everything the script prints, including `target reachable`,
+# `launching chromium`, etc.) are visible via:
+#   journalctl -u arcom-kiosk -f
+# …and are picked up by collect_logs in kiosk.sh, which is what the
+# dashboard's Console view queries every heartbeat. Previously these
+# directives appended to /var/log/arcom-kiosk.log, which meant rich
+# script activity never reached the journal and the Console view
+# could only ever show systemd-level events (Started/Stopped/etc).
 
 # A clean stop kills the whole tree (chromium, scrot loops, watchdog).
 KillMode=mixed

@@ -156,8 +156,14 @@ collect_logs() {
   # subshell. Single source of the fallback, no concatenation.
 
   # Kiosk service journal — tagged + iso timestamps.
-  journal=$(journalctl -u arcom-kiosk --since="@$since_epoch" --no-pager \
+  # --quiet suppresses journalctl's informational markers ("-- Journal
+  # begins at …", "-- Reboot --"). The grep filter then drops any
+  # remaining "-- … --" markers (e.g. "-- No entries --" which fires on
+  # every empty-window query and would otherwise be 100% of what the
+  # dashboard sees on a healthy long-running kiosk).
+  journal=$(journalctl -u arcom-kiosk --since="@$since_epoch" --no-pager --quiet \
     -o short-iso --no-hostname 2>/dev/null \
+    | grep -vE '^-- .* --$' \
     | tail -n "$LOG_CAP_JOURNAL" \
     | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null || true)
   [[ -z "$journal" ]] && journal="[]"

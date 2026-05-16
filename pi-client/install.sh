@@ -79,10 +79,14 @@ sed "s|KIOSK_USER_PLACEHOLDER|$KIOSK_USER|g; s|XDG_RUNTIME_DIR=/run/user/1000|XD
 systemctl daemon-reload
 systemctl enable arcom-kiosk.service
 
-# 7. Set up logging
-echo "[7/9] Setting up logging..."
-touch /var/log/arcom-kiosk.log
-chown "$KIOSK_USER:$KIOSK_USER" /var/log/arcom-kiosk.log
+# 7. Logging — kiosk stdout/stderr flow into systemd-journald via the
+#    unit's default StandardOutput/Error. View with:
+#      journalctl -u arcom-kiosk -f
+#    Remove the stale plain-text log file from previous installs that
+#    set StandardOutput=append:/var/log/arcom-kiosk.log — it's no longer
+#    written to and will only confuse future debugging.
+echo "[7/9] Routing logs to journald (removing stale /var/log/arcom-kiosk.log if present)..."
+rm -f /var/log/arcom-kiosk.log
 
 # 8. Boot directly into graphical mode. The kiosk unit's
 #    WantedBy=graphical.target means this is where it gets pulled in.
@@ -103,6 +107,5 @@ echo
 echo "── Useful commands ──"
 echo "  Check status:    sudo systemctl status arcom-kiosk"
 echo "  Live logs:       sudo journalctl -u arcom-kiosk -f"
-echo "  Kiosk script log: tail -f /var/log/arcom-kiosk.log"
 echo "  Restart:         sudo systemctl restart arcom-kiosk"
 echo "  Stop (debug):    sudo systemctl stop arcom-kiosk"
