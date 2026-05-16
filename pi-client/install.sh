@@ -79,14 +79,23 @@ sed "s|KIOSK_USER_PLACEHOLDER|$KIOSK_USER|g; s|XDG_RUNTIME_DIR=/run/user/1000|XD
 systemctl daemon-reload
 systemctl enable arcom-kiosk.service
 
-# 7. Logging — kiosk stdout/stderr flow into systemd-journald via the
-#    unit's default StandardOutput/Error. View with:
-#      journalctl -u arcom-kiosk -f
-#    Remove the stale plain-text log file from previous installs that
-#    set StandardOutput=append:/var/log/arcom-kiosk.log — it's no longer
-#    written to and will only confuse future debugging.
-echo "[7/9] Routing logs to journald (removing stale /var/log/arcom-kiosk.log if present)..."
+# 7. Logging — two related changes:
+#    a) kiosk stdout/stderr flow into systemd-journald via the unit's
+#       default StandardOutput/Error. View with:
+#         journalctl -u arcom-kiosk -f
+#       Remove the stale plain-text log file from previous installs
+#       that set StandardOutput=append:/var/log/arcom-kiosk.log.
+#    b) Allow non-root users to read the kernel ring buffer (dmesg).
+#       kiosk.sh's collect_logs ships dmesg back to the dashboard
+#       every heartbeat — most importantly under-voltage warnings on
+#       Pi 3B+, which are a major cause of X server crashes. Default
+#       Pi OS sets kernel.dmesg_restrict=1 so the kiosk user can't
+#       read kmsg; without this relaxation, the dashboard's Dmesg
+#       tab stays empty and we miss the most useful failure signal.
+echo "[7/9] Configuring logging (journald routing + dmesg access)..."
 rm -f /var/log/arcom-kiosk.log
+echo 'kernel.dmesg_restrict=0' > /etc/sysctl.d/99-arcom-kiosk-dmesg.conf
+sysctl -q -p /etc/sysctl.d/99-arcom-kiosk-dmesg.conf
 
 # 8. Boot directly into graphical mode. The kiosk unit's
 #    WantedBy=graphical.target means this is where it gets pulled in.
