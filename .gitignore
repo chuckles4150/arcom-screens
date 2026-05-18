@@ -25,3 +25,4 @@ Thumbs.db
 
 # Claude Code (per-machine workflow config)
 .claude/
+CLAUDE.md
