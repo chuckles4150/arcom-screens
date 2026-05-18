@@ -63,10 +63,28 @@ async function readJson(file, fallback) {
   }
 }
 
-async function writeJson(file, data) {
-  const tmp = file + '.tmp';
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2));
-  await fs.rename(tmp, file);
+// Per-file async mutex. writeJson is read-modify-write across awaits, so
+// concurrent callers would otherwise race the same .tmp path and the rename
+// can leave trailing bytes from an interleaved write (2026-05-18: metrics.json
+// gained one stray '}' from two simultaneous heartbeats and crash-looped the
+// server).
+const writeLocks = new Map();
+
+export async function writeJson(file, data) {
+  const prev = writeLocks.get(file) || Promise.resolve();
+  const work = prev.then(async () => {
+    const tmp = file + '.tmp';
+    await fs.writeFile(tmp, JSON.stringify(data, null, 2));
+    await fs.rename(tmp, file);
+  });
+  // Tail must not reject, or a failed write would poison every queued write.
+  const tail = work.catch(() => {});
+  writeLocks.set(file, tail);
+  try {
+    await work;
+  } finally {
+    if (writeLocks.get(file) === tail) writeLocks.delete(file);
+  }
 }
 
 // ── Screens ──────────────────────────────────────────────────────
